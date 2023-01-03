@@ -32,6 +32,10 @@ private:
     // size of a FAT entry is 2 bytes
     int16_t fat[BLOCK_SIZE / 2];
 
+    // Private funtctions
+    // Code we've written
+    void init_direntry(std::string name, uint32_t sizeOfFile, uint16_t fatIndex, uint8_t fileType, uint8_t accessright);
+
 public:
     FS();
     ~FS();

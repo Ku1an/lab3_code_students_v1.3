@@ -15,6 +15,19 @@ int FS::format()
 {
     std::cout << "FS::format()\n";
 
+    dir_entry root;
+    root.file_name[0] = '/';
+    root.size = 0;
+    root.first_blk = 0;
+    root.type = 0x00;
+    root.access_rights = 0x06;
+
+    dir_entry data[disk.get_no_blocks()];
+    data[0] = root;
+
+    uint8_t *dataToBlock = (uint8_t *)&data;
+    disk.write(ROOT_BLOCK, dataToBlock);
+
     // Init First thow blocks in fat
     fat[ROOT_BLOCK] = FAT_EOF;
     fat[FAT_BLOCK] = FAT_EOF;
@@ -110,4 +123,10 @@ int FS::chmod(std::string accessrights, std::string filepath)
 {
     std::cout << "FS::chmod(" << accessrights << "," << filepath << ")\n";
     return 0;
+}
+
+// Own written code
+
+void FS::init_direntry(std::string name, uint32_t sizeOfFile, uint16_t fatIndex, uint8_t fileType, uint8_t accessright)
+{
 }
