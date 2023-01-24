@@ -1,5 +1,6 @@
 #include <iostream>
 #include "fs.h"
+#include <string.h>
 
 FS::FS()
 {
@@ -15,20 +16,15 @@ int FS::format()
 {
     std::cout << "FS::format()\n";
 
+    // Skapar root entry i disken
     dir_entry root;
     root.file_name[0] = '/';
     root.size = 0;
     root.first_blk = 0;
-    root.type = 0x00;
-    root.access_rights = 0x06;
+    root.type = TYPE_DIR;
+    root.access_rights = 0x06; // Alla rättigheter
 
-    dir_entry data[disk.get_no_blocks()];
-    data[0] = root;
-
-    uint8_t *dataToBlock = (uint8_t *)&data;
-    disk.write(ROOT_BLOCK, dataToBlock);
-
-    // Init First thow blocks in fat
+    // Init the blocks in fat
     fat[ROOT_BLOCK] = FAT_EOF;
     fat[FAT_BLOCK] = FAT_EOF;
     for (int i = 2; i < BLOCK_SIZE / 2; i++)
@@ -36,7 +32,9 @@ int FS::format()
         fat[i] = FAT_FREE;
     }
 
-    // Skriva till orginal disk?
+    // Skriv till diksen
+    disk.write(ROOT_BLOCK, (uint8_t *)&root);
+    disk.write(FAT_BLOCK, (uint8_t *)&fat);
 
     return 0;
 }
@@ -46,6 +44,34 @@ int FS::format()
 int FS::create(std::string filepath)
 {
     std::cout << "FS::create(" << filepath << ")\n";
+
+    // Läsa input, filepath är namnet? eller filepth vet ej, sketcy kod tror jag
+    // lär skrivas om
+    bool input = true;
+    std::string completInput;
+    std::string userInput;
+    while (input)
+    {
+        getline(std::cin, userInput);
+
+        if (userInput != "")
+        {
+            completInput = completInput + userInput;
+        }
+        else
+        {
+            input = false;
+        }
+    }
+
+    // completeInput == all data
+    dir_entry currentFile;
+    // uint16_t beginFatindex = fatIndexPlacer();
+    // init_direntry(currentFile, filepath, completInput.size(), 2, TYPE_FILE);
+
+    std::cout << "Denna fil har " << bytes << " bytes i sig\n";
+    std::cout << s;
+
     return 0;
 }
 
@@ -127,6 +153,11 @@ int FS::chmod(std::string accessrights, std::string filepath)
 
 // Own written code
 
-void FS::init_direntry(std::string name, uint32_t sizeOfFile, uint16_t fatIndex, uint8_t fileType, uint8_t accessright)
+void FS::init_direntry(dir_entry &currentDir, std::string name, uint32_t sizeOfFile, uint16_t fatIndex, uint8_t fileType)
 {
+    strcpy(currentDir.file_name, name.c_str());
+    currentDir.size = sizeOfFile;
+    currentDir.first_blk = fatIndex;
+    currentDir.type = fileType;
+    currentDir.access_rights = 0x06;
 }

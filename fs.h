@@ -34,7 +34,8 @@ private:
 
     // Private funtctions
     // Code we've written
-    void init_direntry(std::string name, uint32_t sizeOfFile, uint16_t fatIndex, uint8_t fileType, uint8_t accessright);
+    void init_direntry(dir_entry &currentDir, std::string name, uint32_t sizeOfFile, uint16_t fatIndex, uint8_t fileType);
+    int fatIndexPlacer();
 
 public:
     FS();
