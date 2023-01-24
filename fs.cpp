@@ -65,7 +65,7 @@ int FS::create(std::string filepath)
 {
     std::cout << "FS::create(" << filepath << ")\n";
 
-    // Först kontrollera och godkänna namnet
+    // Först kontrollera och godkänn namnet
     if (filepath.size() > 56)
     {
         std::cout << "ERROR : Filename to large. Canceling file creation ...";
