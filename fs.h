@@ -32,7 +32,7 @@ private:
     // size of a FAT entry is 2 bytes
     int16_t fat[BLOCK_SIZE / 2];
 
-    dir_entry all_entries[BLOCK_SIZE / 2];
+    dir_entry all_entries[BLOCK_SIZE / 64];
     int workingDirectory;
     const int DISKBLOCKS = BLOCK_SIZE / 2;
 
@@ -40,7 +40,7 @@ private:
     dir_entry createDirEntry(std::string name, uint32_t sizeOfFile, uint8_t fileType);
     int firstEmptyFatBlock(int16_t fat[BLOCK_SIZE / 2]);
     int *findFreeFatBlocks(int firstBlock, int amountOfBlocks, int arr[]);
-    void writeToDisk(dir_entry currentFile);
+    void writeToDisk(dir_entry currentFile, uint8_t dataBuffer[]);
 
 public:
     FS();

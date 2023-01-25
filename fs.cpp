@@ -1,7 +1,6 @@
 #include <iostream>
 #include "fs.h"
 #include <string.h>
-// test
 
 FS::FS()
 {
@@ -36,7 +35,7 @@ int FS::format()
     // När man ska ta reda på saker så loopar man i denna bara
     all_entries[0] = root;
 
-    for (int i = 1; i < DISKBLOCKS; i++)
+    for (int i = 1; i < BLOCK_SIZE/64; i++)
     {
         // Kommer hjälpa oss när vi ska storea saker i arrayen, är first_blk = -1 existerar ingen entry på den plats.
         all_entries[i].first_blk = -1;
@@ -66,6 +65,11 @@ int FS::create(std::string filepath)
 {
     std::cout << "FS::create(" << filepath << ")\n";
 
+    // Validera filepath
+    // Lokalt?
+    // Relativ?
+    // Absolut?
+
     // Först kontrollera och godkänn namnet
     if (filepath.size() > 56)
     {
@@ -91,10 +95,16 @@ int FS::create(std::string filepath)
         }
     }
 
+    // Omvandlar själva inputen till data som ska skrivas till disken
+    uint8_t tmp_buffer[completInput.size()];
+    for (int i = 0 ; i < completInput.size() ; i++)
+    {
+        tmp_buffer[i] = (uint8_t)completInput[i];
+    }
     // Nu skapar vi en direntry om filen, vet ej exakt vad namnet ska vara etc
     dir_entry currentFile = createDirEntry(filepath, completInput.size(), TYPE_FILE);
     // Nu ändrar VI FAT OCH DISK!
-    writeToDisk(currentFile);
+    writeToDisk(currentFile,tmp_buffer);
 
     return 0;
 }
@@ -233,11 +243,36 @@ int *FS::findFreeFatBlocks(int firstBlock, int amountOfBlocks, int arr[])
 }
 
 // This function writes the new file to disk and also updates fat and all_entries the
-void FS::writeToDisk(dir_entry currentDir)
+void FS::writeToDisk(dir_entry currentDir,uint8_t dataBuffer[])
 {
+    // Potentiell lösning:
+    // Find Free FAT Block Index
+
+    // Create Dir Entry
+
+    /*
+    n = 0
+    uint8_t tmp_buffer[];
+    int byte_counter = 0
+    for (int i = 0; i < currentDir.size(); i++)
+    {
+        if (block_counter == BLOCK_SIZE || i == currentDir.size() - 1)
+        {
+            disk.write(freeFat[n], (uint8_t*)tmp_buffer);
+            n += 1;
+            tmp_buffer = [];
+            byte_counter = 0;
+        }
+        else
+        {
+            tmp_buffer[byte_counter] = dataBuffer[byte_counter];
+            byte_counter += 1;
+        }
+    }
+    */
+    
     // Update fat
     int amountOfBlocks;
-
     if (currentDir.size % BLOCK_SIZE == 0)
     {
         amountOfBlocks = currentDir.size / BLOCK_SIZE;
@@ -246,21 +281,13 @@ void FS::writeToDisk(dir_entry currentDir)
     {
         amountOfBlocks = (currentDir.size / BLOCK_SIZE) + 1;
     }
+    
 
-    // test
-    /*amountOfBlocks = 2;
-    fat[2] = FAT_EOF;
-    fat[3] = FAT_EOF;
-    fat[5] = FAT_EOF;
-    fat[6] = FAT_EOF;
-    fat[9] = FAT_EOF;
-    currentDir.first_blk = 4;*/
-
-    // Now find amountOfBlocks slots
     if (amountOfBlocks > 1)
     {
         int tempArray[amountOfBlocks];
         int *freeFat = findFreeFatBlocks(currentDir.first_blk, amountOfBlocks, tempArray);
+
 
         // Then change in fat here
         for (int i = 0; i < amountOfBlocks - 1; i++)
@@ -275,7 +302,7 @@ void FS::writeToDisk(dir_entry currentDir)
     }
 
     // Add to entry
-    for (int i = 1; i < DISKBLOCKS; i++)
+    for (int i = 1; i < BLOCK_SIZE/64; i++)
     {
         if (all_entries[i].first_blk == -1)
         {
@@ -285,7 +312,38 @@ void FS::writeToDisk(dir_entry currentDir)
     }
 
     // Write to disk
-    disk.write(ROOT_BLOCK, (uint8_t *)&all_entries);
+    //disk.write(ROOT_BLOCK, (uint8_t *)&all_entries);
 
-    // Lägg till datan sen här
+
+    // Skriva in fil data till disk, vi vet platesenra, nu måste
+   /* if (amountOfBlocks == 1) {
+        disk.write(freeFat[0],(uint8_t*) dataBuffer);
+    }
+    else {
+           /* int firstIndex = 0;
+            int lastIndex = BLOCK_SIZE;
+
+        for (int i = 0; i < amountOfBlocks; i++)
+        {
+            
+            
+            if(i == (amountOfBlocks - 1)) {
+                // då vet vi att de är sista iteration.
+                //Måste veta hur mycket som är kvar i bytes för arrayens skull.
+                int bytesLeft = currentDir.size - firstIndex;
+                uint8_t tempBuff[bytesLeft]
+                std::copy(std::begin(dataBuffer) + firstIndex, std::end(dataBuffer), std::begin(temp_buff));
+                disk.write(freeFat[i],(uint8_t*) tempBuff);
+            }
+            else {
+                uint8_t tempBuff[BLOCK_SIZE];
+                std::copy(std::begin(dataBuffer) + firstIndex, std::begin(dataBuffer) + lastIndex, std::begin(temp_buff));
+                firstIndex += BLOCK_SIZE;
+                lastIndex += BLOCK_SIZE;
+                disk.write(freeFat[i],(uint8_t*) tempBuff);*/
+
+          //  }
+        //}
+                
+    //}*/
 }
