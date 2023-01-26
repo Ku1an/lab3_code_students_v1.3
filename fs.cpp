@@ -8,8 +8,7 @@ FS::FS()
 
     workingDirectory = 0;
 
-    // Läser in fat och root
-    disk.read(ROOT_BLOCK, (uint8_t *)&all_entries);
+    // Läser in fat och root, vet ej om vi behöver läsa root
     disk.read(FAT_BLOCK, (uint8_t *)&fat);
 }
 
@@ -22,10 +21,12 @@ FS::~FS()
 int FS::format()
 {
     std::cout << "FS::format()\n";
-
     // Skapar root entry i disken
+    dir_entry all_entries[BLOCK_SIZE / 64];
     dir_entry root;
-    root.file_name[0] = '/';
+
+    std::string rootName = "/";
+    strcpy(root.file_name, rootName.c_str()); // blev konstigt om jag satte namnet direkt till '/', ingen aning varför
     root.size = 0;
     root.first_blk = 0;
     root.type = TYPE_DIR;
@@ -34,12 +35,6 @@ int FS::format()
     // Array med alla entries i, vet ej om de är så men enda logiska enligt mig
     // När man ska ta reda på saker så loopar man i denna bara
     all_entries[0] = root;
-
-    for (int i = 1; i < BLOCK_SIZE/64; i++)
-    {
-        // Kommer hjälpa oss när vi ska storea saker i arrayen, är first_blk = -1 existerar ingen entry på den plats.
-        all_entries[i].first_blk = -1;
-    }
 
     // Init the blocks in fat
     fat[ROOT_BLOCK] = FAT_EOF;
@@ -71,9 +66,15 @@ int FS::create(std::string filepath)
     // Absolut?
 
     // Först kontrollera och godkänn namnet
-    if (filepath.size() > 56)
+    if (filepath.size() >= 56)
     {
-        std::cout << "ERROR : Filename to large. Canceling file creation ...";
+        std::cout << "ERROR : Filename to large. Canceling file creation ..." << std::endl;
+        return 0;
+    }
+    // HÄR MÅSTE VI KONTROLLERA OM ANNNAN FILL med samma namn finns!
+    if (checkFileName(workingDirectory, filepath))
+    {
+        std::cout << "ERROR : A file with that name does already exist. Canceling file creation ..." << std::endl;
         return 0;
     }
 
@@ -96,15 +97,10 @@ int FS::create(std::string filepath)
     }
 
     // Omvandlar själva inputen till data som ska skrivas till disken
-    uint8_t tmp_buffer[completInput.size()];
-    for (int i = 0 ; i < completInput.size() ; i++)
-    {
-        tmp_buffer[i] = (uint8_t)completInput[i];
-    }
     // Nu skapar vi en direntry om filen, vet ej exakt vad namnet ska vara etc
     dir_entry currentFile = createDirEntry(filepath, completInput.size(), TYPE_FILE);
     // Nu ändrar VI FAT OCH DISK!
-    writeToDisk(currentFile,tmp_buffer);
+    writeToDisk(currentFile, completInput);
 
     return 0;
 }
@@ -113,6 +109,56 @@ int FS::create(std::string filepath)
 int FS::cat(std::string filepath)
 {
     std::cout << "FS::cat(" << filepath << ")\n";
+
+    // kolla först namnet
+    if (filepath.size() >= 56 || !checkFileName(workingDirectory, filepath))
+    {
+        std::cout << "ERROR : File does not exist. Canceling cat file ..." << std::endl;
+        return 0;
+    }
+
+    // get contents of file how?
+    // Ta reda på vilket start block
+    dir_entry currentfile;
+    dir_entry dirData[BLOCK_SIZE / 64];
+    disk.read(workingDirectory, (uint8_t *)dirData);
+
+    for (int i = 0; i < BLOCK_SIZE / 64; i++)
+    {
+        // då vet vi att vi hittat
+        if (dirData[i].file_name == filepath)
+        {
+            currentfile = dirData[i];
+            break;
+        }
+    }
+
+    // Ta reda på vilka fat block filen finns i och returnera sedan.
+    // Ta reda på amount of blocks.
+
+    int amountOfBlocks;
+    if (currentfile.size % BLOCK_SIZE == 0)
+    {
+        amountOfBlocks = currentfile.size / BLOCK_SIZE;
+    }
+    else
+    {
+        amountOfBlocks = (currentfile.size / BLOCK_SIZE) + 1;
+    }
+
+    int *fatFileBlocks;
+    fatFileBlocks = fatFileIndex(currentfile.first_blk, amountOfBlocks);
+
+    // DETTA MÅSTE FIXAS DÅ DE EJ TAR Hänsyn till filler över 4092 kb
+    char data[currentfile.size];
+    for (int i = 0; i < amountOfBlocks; i++)
+    {
+        disk.read(fatFileBlocks[i], (uint8_t *)data);
+        std::cout << data << std::endl;
+    }
+
+    delete[] fatFileBlocks;
+
     return 0;
 }
 
@@ -120,6 +166,23 @@ int FS::cat(std::string filepath)
 int FS::ls()
 {
     std::cout << "FS::ls()\n";
+    // LÄs från nuvarande directory
+    dir_entry dirData[BLOCK_SIZE / 64];
+    disk.read(workingDirectory, (uint8_t *)dirData);
+
+    std::cout << "name\t";
+    std::cout << "size" << std::endl;
+
+    // nu har vi alla filler i denna, gå igenom dire och ta reda på vilka som existerar
+    for (int i = 1; i < BLOCK_SIZE / 64; i++)
+    {
+        if (dirData[i].first_blk != 65535)
+        {
+            // då vet vi att de är en fil
+            std::cout << dirData[i].file_name << "\t" << dirData[i].size << std::endl;
+        }
+    }
+
     return 0;
 }
 
@@ -243,36 +306,13 @@ int *FS::findFreeFatBlocks(int firstBlock, int amountOfBlocks, int arr[])
 }
 
 // This function writes the new file to disk and also updates fat and all_entries the
-void FS::writeToDisk(dir_entry currentDir,uint8_t dataBuffer[])
+void FS::writeToDisk(dir_entry currentDir, std::string data)
 {
-    // Potentiell lösning:
-    // Find Free FAT Block Index
 
-    // Create Dir Entry
-
-    /*
-    n = 0
-    uint8_t tmp_buffer[];
-    int byte_counter = 0
-    for (int i = 0; i < currentDir.size(); i++)
-    {
-        if (block_counter == BLOCK_SIZE || i == currentDir.size() - 1)
-        {
-            disk.write(freeFat[n], (uint8_t*)tmp_buffer);
-            n += 1;
-            tmp_buffer = [];
-            byte_counter = 0;
-        }
-        else
-        {
-            tmp_buffer[byte_counter] = dataBuffer[byte_counter];
-            byte_counter += 1;
-        }
-    }
-    */
-    
     // Update fat
     int amountOfBlocks;
+    int *freeFat;
+
     if (currentDir.size % BLOCK_SIZE == 0)
     {
         amountOfBlocks = currentDir.size / BLOCK_SIZE;
@@ -281,13 +321,11 @@ void FS::writeToDisk(dir_entry currentDir,uint8_t dataBuffer[])
     {
         amountOfBlocks = (currentDir.size / BLOCK_SIZE) + 1;
     }
-    
 
     if (amountOfBlocks > 1)
     {
         int tempArray[amountOfBlocks];
-        int *freeFat = findFreeFatBlocks(currentDir.first_blk, amountOfBlocks, tempArray);
-
+        freeFat = findFreeFatBlocks(currentDir.first_blk, amountOfBlocks, tempArray);
 
         // Then change in fat here
         for (int i = 0; i < amountOfBlocks - 1; i++)
@@ -302,48 +340,92 @@ void FS::writeToDisk(dir_entry currentDir,uint8_t dataBuffer[])
     }
 
     // Add to entry
-    for (int i = 1; i < BLOCK_SIZE/64; i++)
+
+    dir_entry dirData[BLOCK_SIZE / 64];
+    disk.read(workingDirectory, (uint8_t *)dirData);
+    for (int i = 1; i < BLOCK_SIZE / 64; i++)
     {
-        if (all_entries[i].first_blk == -1)
+        // 65535 är högsta value i unit16_t. Alla first.blk har blivit de som default
+        //  Är firsdt_blk === 65535 vet vi att vi kan använda det då inget block i fat har index 65535.
+        if (dirData[i].first_blk == 65535)
         {
-            all_entries[i] = currentDir;
+            dirData[i] = currentDir;
             break;
         }
     }
 
     // Write to disk
-    //disk.write(ROOT_BLOCK, (uint8_t *)&all_entries);
+    disk.write(ROOT_BLOCK, (uint8_t *)&dirData);
 
+    // Gör om datan till char array
+    char dataArr[data.size()];
+    strcpy(dataArr, data.c_str());
 
-    // Skriva in fil data till disk, vi vet platesenra, nu måste
-   /* if (amountOfBlocks == 1) {
-        disk.write(freeFat[0],(uint8_t*) dataBuffer);
+    // Skriva in fil data till disk, vi vet platsenra, nu måste vi faktiskt göra det
+    if (amountOfBlocks == 1)
+    {
+        disk.write(currentDir.first_blk, (uint8_t *)dataArr);
     }
-    else {
-           /* int firstIndex = 0;
-            int lastIndex = BLOCK_SIZE;
+    else
+    {
+        int firstIndex = 0;
+        int lastIndex = BLOCK_SIZE;
 
         for (int i = 0; i < amountOfBlocks; i++)
         {
-            
-            
-            if(i == (amountOfBlocks - 1)) {
+
+            if (i == (amountOfBlocks - 1))
+            {
                 // då vet vi att de är sista iteration.
-                //Måste veta hur mycket som är kvar i bytes för arrayens skull.
+                // Måste veta hur mycket som är kvar i bytes för arrayens skull.
                 int bytesLeft = currentDir.size - firstIndex;
-                uint8_t tempBuff[bytesLeft]
-                std::copy(std::begin(dataBuffer) + firstIndex, std::end(dataBuffer), std::begin(temp_buff));
-                disk.write(freeFat[i],(uint8_t*) tempBuff);
+                char tempBuff[bytesLeft];
+                std::copy(dataArr + firstIndex, dataArr + currentDir.size, tempBuff);
+                disk.write(freeFat[i], (uint8_t *)tempBuff);
             }
-            else {
+            else
+            {
                 uint8_t tempBuff[BLOCK_SIZE];
-                std::copy(std::begin(dataBuffer) + firstIndex, std::begin(dataBuffer) + lastIndex, std::begin(temp_buff));
+                std::copy(dataArr + firstIndex, dataArr + lastIndex, tempBuff);
                 firstIndex += BLOCK_SIZE;
                 lastIndex += BLOCK_SIZE;
-                disk.write(freeFat[i],(uint8_t*) tempBuff);*/
+                disk.write(freeFat[i], (uint8_t *)tempBuff);
+            }
+        }
+    }
+}
 
-          //  }
-        //}
-                
-    //}*/
+// Returnerar sant om ett filnamn finns,
+bool FS::checkFileName(int currentWorkDir, std::string filename)
+{
+    bool nameExist = false;
+
+    // Läs från disk o få data.
+    dir_entry dirData[BLOCK_SIZE / 64];
+    disk.read(currentWorkDir, (uint8_t *)dirData);
+
+    for (int i = 0; i < BLOCK_SIZE / 64; i++)
+    {
+        if (dirData[i].first_blk != 65535 && dirData[i].file_name == filename)
+        {
+            nameExist = true;
+            break;
+        }
+    }
+
+    return nameExist;
+}
+
+int *FS::fatFileIndex(int firstblock, int amountOfBlocks)
+{
+    int *fatIndexArr = new int[100];
+    int currentIndex = firstblock;
+
+    for (int i = 0; i < amountOfBlocks; i++)
+    {
+        fatIndexArr[i] = currentIndex;
+        currentIndex = fat[currentIndex];
+    }
+
+    return fatIndexArr;
 }

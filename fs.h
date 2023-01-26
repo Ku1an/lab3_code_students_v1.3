@@ -18,11 +18,11 @@
 
 struct dir_entry
 {
-    char file_name[56];    // name of the file / sub-directory
-    uint32_t size;         // size of the file in bytes
-    uint16_t first_blk;    // index in the FAT for the first block of the file
-    uint8_t type;          // directory (1) or file (0)
-    uint8_t access_rights; // read (0x04), write (0x02), execute (0x01)
+    char file_name[56];         // name of the file / sub-directory
+    uint32_t size;              // size of the file in bytes
+    uint16_t first_blk = 65535; // index in the FAT for the first block of the file, Ger startvärde då det kommer underlätta
+    uint8_t type;               // directory (1) or file (0)
+    uint8_t access_rights;      // read (0x04), write (0x02), execute (0x01)
 };
 
 class FS
@@ -31,8 +31,6 @@ private:
     Disk disk;
     // size of a FAT entry is 2 bytes
     int16_t fat[BLOCK_SIZE / 2];
-
-    dir_entry all_entries[BLOCK_SIZE / 64];
     int workingDirectory;
     const int DISKBLOCKS = BLOCK_SIZE / 2;
 
@@ -40,7 +38,9 @@ private:
     dir_entry createDirEntry(std::string name, uint32_t sizeOfFile, uint8_t fileType);
     int firstEmptyFatBlock(int16_t fat[BLOCK_SIZE / 2]);
     int *findFreeFatBlocks(int firstBlock, int amountOfBlocks, int arr[]);
-    void writeToDisk(dir_entry currentFile, uint8_t dataBuffer[]);
+    void writeToDisk(dir_entry currentFile, std::string data);
+    bool checkFileName(int currentWorkDir, std::string filename);
+    int *fatFileIndex(int firstblock, int amountOfBlocks);
 
 public:
     FS();
