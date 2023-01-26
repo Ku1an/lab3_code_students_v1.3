@@ -144,7 +144,7 @@ int FS::ls()
     std::cout << "FS::ls()\n";
     // LÄs från nuvarande directory
     dir_entry dirData[BLOCK_SIZE / 64];
-    disk.read(workingDirectory, (uint8_t *)dirData);
+    disk.read(getWorkingDirectory(), (uint8_t *)dirData);
 
     std::cout << "name\t";
     std::cout << "size" << std::endl;
@@ -429,7 +429,6 @@ void FS::updateFat(dir_entry currentFile)
     disk.write(FAT_BLOCK, (uint8_t *)&fat);
 }
 
-// This function writes the new file to disk and also updates fat and all_entries the
 void FS::diskWrite(dir_entry currentDir, std::string data)
 {
 
