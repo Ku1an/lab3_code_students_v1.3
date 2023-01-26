@@ -34,13 +34,32 @@ private:
     int workingDirectory;
     const int DISKBLOCKS = BLOCK_SIZE / 2;
 
-    // Private funtctions
-    dir_entry createDirEntry(std::string name, uint32_t sizeOfFile, uint8_t fileType);
-    int firstEmptyFatBlock(int16_t fat[BLOCK_SIZE / 2]);
-    int *findFreeFatBlocks(int firstBlock, int amountOfBlocks, int arr[]);
-    void writeToDisk(dir_entry currentFile, std::string data);
+    // Funktioner nedan
+
+    void setWorkingDirectory(int newDir) { workingDirectory = newDir; }
+    int getWorkingDirectory() { return workingDirectory; }
+
+    dir_entry initDirEntry(std::string name, uint32_t sizeOfFile, uint8_t fileType);
+    // Setters
+    // Getters, användbara funktioner. Kommer användas i många olika
+    // Returnerar given mängd block en size ska delas in i
+    int getAmountOfBlocks(int size);
+    // Returnerar de slots i faten som är lediga för filen. Dvs, om filen ska delas in i 3 delar returneras 3 lediga fat index.
+    int *getFreeFatSlots(int firstBlock, int amountOfBlocks);
+    // Returnerar första lediga index i fat.
+    int getFirstFreeFatBlock(int16_t fat[BLOCK_SIZE / 2]);
+    // Returnerar en array av de index i disken som filen har sin data i från fat.
+    int *getFileBlockLocation(int firstblock);
+    // Returnerar en fils dir_entry
+    dir_entry getFileDirEntry(std::string fileName);
+    // Skriver til disken
+    void diskWrite(dir_entry currentFile, std::string data);
+    // Updaterar fat, används när vi skrivit något till disken , eller raderat, beror på!
+    void updateFat(dir_entry currentFile);
+    // Uppdaterar nuvarnde working directory dir_entryies
+    void updateDiskDirEntry(dir_entry newFile);
+    // Kontrollera om ett namn är giltigt för filen.
     bool checkFileName(int currentWorkDir, std::string filename);
-    int *fatFileIndex(int firstblock, int amountOfBlocks);
 
 public:
     FS();
