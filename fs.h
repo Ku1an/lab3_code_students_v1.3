@@ -50,6 +50,8 @@ private:
     int getFirstFreeFatBlock(int16_t fat[BLOCK_SIZE / 2]);
     // Returnerar en array av de index i disken som filen har sin data i från fat.
     int *getFileBlockLocation(int firstblock);
+    // Sätter given array av dir_entrys till data som består av de nuvarande.
+    void getCurrentWorkDirectory(dir_entry *currentWorkDir);
     // Returnerar en fils dir_entry
     dir_entry getFileDirEntry(std::string fileName);
     // Skriver til disken
@@ -60,6 +62,8 @@ private:
     void updateDiskDirEntry(dir_entry newFile);
     // Kontrollera om ett namn är giltigt för filen.
     bool checkFileName(int currentWorkDir, std::string filename);
+    // Kontrollerar om det finns utrymme för fil i nuvarande workingdirectory.
+    bool checkCwdSpace();
 
 public:
     FS();

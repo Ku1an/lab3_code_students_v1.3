@@ -22,13 +22,13 @@ int FS::format()
 {
     std::cout << "FS::format()\n";
     // Skapar root entry i disken
-    dir_entry all_entries[BLOCK_SIZE / 64];
+    dir_entry currentDirectory[BLOCK_SIZE / sizeof(dir_entry)];
     dir_entry root = initDirEntry("/", 0, TYPE_DIR);
     root.first_blk = 0;
 
     // Array med alla entries i, vet ej om de är så men enda logiska enligt mig
     // När man ska ta reda på saker så loopar man i denna bara
-    all_entries[0] = root;
+    currentDirectory[0] = root;
 
     // Init the blocks in fat
     fat[ROOT_BLOCK] = FAT_EOF;
@@ -39,7 +39,7 @@ int FS::format()
     }
 
     // Skriv till diksen
-    disk.write(ROOT_BLOCK, (uint8_t *)&all_entries);
+    disk.write(ROOT_BLOCK, (uint8_t *)&currentDirectory);
     disk.write(FAT_BLOCK, (uint8_t *)&fat);
 
     // Vår working directory
@@ -66,6 +66,13 @@ int FS::create(std::string filepath)
         return 0;
     }
 
+    if (!checkCwdSpace())
+    {
+        std::cout << "ERROR : No place in current directory. Canceling file creation ..." << std::endl;
+        return 0;
+    }
+
+    // Kontrollera om de finns space i nuvarnde dir
     // Läsa input från användaren.
     std::string completeInput;
     std::string userInput;
@@ -75,7 +82,7 @@ int FS::create(std::string filepath)
         {
             break;
         }
-        completeInput += userInput;
+        completeInput += userInput + "\n";
     }
     // Skapar en Directory entry för filen.
     dir_entry newFile = initDirEntry(filepath, completeInput.size(), TYPE_FILE);
@@ -144,7 +151,7 @@ int FS::ls()
     std::cout << "size" << std::endl;
 
     // nu har vi alla filler i denna, gå igenom dire och ta reda på vilka som existerar
-    for (int i = 1; i < BLOCK_SIZE / 64; i++)
+    for (int i = 1; i < BLOCK_SIZE / sizeof(dir_entry); i++)
     {
         if (dirData[i].first_blk != 65535)
         {
@@ -208,21 +215,9 @@ int FS::cd(std::string dirpath)
 int FS::pwd()
 {
     std::cout << "FS::pwd()\n";
-    // NEDAN ÄR TEST KOD, HAR INGET MED PWD ATT GÖRA
-    /* std::cout << "FAT------------------------------------------------------\n";
-     for (int i = 0; i < 20; i++)
-     {
-         std::cout << "Index " << i << " : " << fat[i] << std::endl;
-     }
-     int *dataBlocks;
-     dataBlocks = getFileBlockLocation(2);
-
-     std::cout << "INTE FAT------------------------------------------------------\n";
-     for (int i = 0; i < 20; i++)
-     {
-         std::cout << "Index " << i << " : " << dataBlocks[i] << std::endl;
-     }
-     delete[] dataBlocks;*/
+    dir_entry currentCwd[BLOCK_SIZE / 64];
+    getCurrentWorkDirectory(currentCwd);
+    std::cout << currentCwd->file_name << std::endl;
 
     return 0;
 }
@@ -348,7 +343,7 @@ dir_entry FS::getFileDirEntry(std::string fileName)
 {
     dir_entry file;
     dir_entry dirData[BLOCK_SIZE / 64];
-    disk.read(workingDirectory, (uint8_t *)dirData);
+    disk.read(getWorkingDirectory(), (uint8_t *)dirData);
 
     for (int i = 0; i < BLOCK_SIZE / 64; i++)
     {
@@ -360,6 +355,12 @@ dir_entry FS::getFileDirEntry(std::string fileName)
         }
     }
     return file;
+}
+void FS::getCurrentWorkDirectory(dir_entry *currentWorkDir)
+{
+    dir_entry dirData[BLOCK_SIZE / 64];
+    disk.read(getWorkingDirectory(), (uint8_t *)dirData);
+    memcpy(currentWorkDir, dirData, sizeof(dir_entry));
 }
 
 // Returnerar sant om ett filnamn finns,
@@ -381,6 +382,27 @@ bool FS::checkFileName(int currentWorkDir, std::string filename)
     }
 
     return nameExist;
+}
+
+bool FS::checkCwdSpace()
+{
+    bool cwdSpace = false;
+
+    dir_entry dirData[BLOCK_SIZE / 64];
+    disk.read(getWorkingDirectory(), (uint8_t *)dirData);
+
+    for (int i = 1; i < BLOCK_SIZE / 64; i++)
+    {
+        // 65535 är högsta value i unit16_t. Alla first.blk har blivit de som default
+        //  Är firsdt_blk === 65535 vet vi att vi kan använda det då inget block i fat har index 65535.
+        // Om ej vet vi att ingen plats existerar;
+        if (dirData[i].first_blk == 65535)
+        {
+            cwdSpace = true;
+            break;
+        }
+    }
+    return cwdSpace;
 }
 
 void FS::updateDiskDirEntry(dir_entry newFile)
