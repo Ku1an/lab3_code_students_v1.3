@@ -6,7 +6,7 @@ FS::FS()
 {
     std::cout << "FS::FS()... Creating file system\n";
 
-    workingDirectory = 0;
+    setWorkingDirectory(0);
 
     // Läser in fat och root, vet ej om vi behöver läsa root
     disk.read(FAT_BLOCK, (uint8_t *)&fat);
@@ -23,14 +23,8 @@ int FS::format()
     std::cout << "FS::format()\n";
     // Skapar root entry i disken
     dir_entry all_entries[BLOCK_SIZE / 64];
-    dir_entry root;
-
-    std::string rootName = "/";
-    strcpy(root.file_name, rootName.c_str()); // blev konstigt om jag satte namnet direkt till '/', ingen aning varför
-    root.size = 0;
+    dir_entry root = initDirEntry("/", 0, TYPE_DIR);
     root.first_blk = 0;
-    root.type = TYPE_DIR;
-    root.access_rights = 0x06; // Alla rättigheter
 
     // Array med alla entries i, vet ej om de är så men enda logiska enligt mig
     // När man ska ta reda på saker så loopar man i denna bara
@@ -49,7 +43,7 @@ int FS::format()
     disk.write(FAT_BLOCK, (uint8_t *)&fat);
 
     // Vår working directory
-    workingDirectory = 0;
+    setWorkingDirectory(0);
 
     return 0;
 }

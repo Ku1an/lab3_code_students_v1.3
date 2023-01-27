@@ -36,7 +36,7 @@ private:
 
     // Funktioner nedan
 
-    void setWorkingDirectory(int newDir) { workingDirectory = newDir; }
+    void setWorkingDirectory(int newWorkingDirectory) { workingDirectory = newWorkingDirectory; }
     int getWorkingDirectory() { return workingDirectory; }
 
     dir_entry initDirEntry(std::string name, uint32_t sizeOfFile, uint8_t fileType);
