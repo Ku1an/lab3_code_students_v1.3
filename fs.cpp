@@ -146,19 +146,19 @@ int FS::ls()
 {
     std::cout << "FS::ls()\n";
     // LÄs från nuvarande directory
-    dir_entry dirData[BLOCK_SIZE / 64];
-    disk.read(getWorkingDirectory(), (uint8_t *)dirData);
+    dir_entry currentCwd[BLOCK_SIZE / 64];
+    getCurrentWorkDirectoryEntries(currentCwd);
 
     std::cout << "name\t";
     std::cout << "size" << std::endl;
 
     // nu har vi alla filler i denna, gå igenom dire och ta reda på vilka som existerar
-    for (int i = 1; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
     {
-        if (dirData[i].first_blk != 65535)
+        if (currentCwd[i].first_blk != 65535)
         {
             // då vet vi att de är en fil
-            std::cout << dirData[i].file_name << "\t" << dirData[i].size << std::endl;
+            std::cout << currentCwd[i].file_name << "\t" << currentCwd[i].size << std::endl;
         }
     }
 
@@ -170,6 +170,32 @@ int FS::ls()
 int FS::cp(std::string sourcepath, std::string destpath)
 {
     std::cout << "FS::cp(" << sourcepath << "," << destpath << ")\n";
+
+    if (destpath.size() >= 56)
+    {
+        std::cout << "ERROR : Filename to large. Canceling copy operation ..." << std::endl;
+        return 0;
+    }
+
+    // Checkar att sourcepath faktiskt finns
+    if (checkFileName(workingDirectory, destpath))
+    {
+        std::cout << "ERROR : You cannot copy contents of a file. Canceling copy operation ..." << std::endl;
+        return 0;
+    }
+    // Checkar att destpath faktiskt finns
+    if (checkFileName(workingDirectory, destpath))
+    {
+        std::cout << "ERROR : A file with that name does already exist. Canceling copy operation ..." << std::endl;
+        return 0;
+    }
+
+    if (!checkCwdSpace())
+    {
+        std::cout << "ERROR : No place in current directory. Canceling copy operation ..." << std::endl;
+        return 0;
+    }
+
     return 0;
 }
 
@@ -351,15 +377,15 @@ int FS::getAmountOfBlocks(int size)
 dir_entry FS::getFileDirEntry(std::string fileName)
 {
     dir_entry file;
-    dir_entry dirData[BLOCK_SIZE / 64];
-    disk.read(getWorkingDirectory(), (uint8_t *)dirData);
+    dir_entry currentCwd[BLOCK_SIZE / 64];
+    getCurrentWorkDirectoryEntries(currentCwd);
 
     for (int i = 0; i < BLOCK_SIZE / 64; i++)
     {
         // då vet vi att vi hittat
-        if (dirData[i].file_name == fileName)
+        if (currentCwd[i].file_name == fileName)
         {
-            file = dirData[i];
+            file = currentCwd[i];
             break;
         }
     }
@@ -369,7 +395,7 @@ void FS::getCurrentWorkDirectoryEntries(dir_entry *currentWorkDir)
 {
     dir_entry dirData[BLOCK_SIZE / 64];
     disk.read(getWorkingDirectory(), (uint8_t *)dirData);
-    memcpy(currentWorkDir, dirData, sizeof(dir_entry));
+    memcpy(currentWorkDir, dirData, sizeof(dirData));
 }
 
 // Returnerar sant om ett filnamn finns,
@@ -378,12 +404,12 @@ bool FS::checkFileName(int currentWorkDir, std::string filename)
     bool nameExist = false;
 
     // Läs från disk o få data.
-    dir_entry dirData[BLOCK_SIZE / 64];
-    disk.read(currentWorkDir, (uint8_t *)dirData);
+    dir_entry currentCwd[BLOCK_SIZE / 64];
+    getCurrentWorkDirectoryEntries(currentCwd);
 
     for (int i = 0; i < BLOCK_SIZE / 64; i++)
     {
-        if (dirData[i].first_blk != 65535 && dirData[i].file_name == filename)
+        if (currentCwd[i].first_blk != 65535 && currentCwd[i].file_name == filename)
         {
             nameExist = true;
             break;
@@ -397,15 +423,15 @@ bool FS::checkCwdSpace()
 {
     bool cwdSpace = false;
 
-    dir_entry dirData[BLOCK_SIZE / 64];
-    disk.read(getWorkingDirectory(), (uint8_t *)dirData);
+    dir_entry currentCwd[BLOCK_SIZE / 64];
+    getCurrentWorkDirectoryEntries(currentCwd);
 
     for (int i = 1; i < BLOCK_SIZE / 64; i++)
     {
         // 65535 är högsta value i unit16_t. Alla first.blk har blivit de som default
         //  Är firsdt_blk === 65535 vet vi att vi kan använda det då inget block i fat har index 65535.
         // Om ej vet vi att ingen plats existerar;
-        if (dirData[i].first_blk == 65535)
+        if (currentCwd[i].first_blk == 65535)
         {
             cwdSpace = true;
             break;
@@ -416,19 +442,20 @@ bool FS::checkCwdSpace()
 
 void FS::updateDiskDirEntry(dir_entry newFile)
 {
-    dir_entry dirData[BLOCK_SIZE / 64];
-    disk.read(getWorkingDirectory(), (uint8_t *)dirData);
+    dir_entry currentCwd[BLOCK_SIZE / 64];
+    getCurrentWorkDirectoryEntries(currentCwd);
+
     for (int i = 0; i < BLOCK_SIZE / 64; i++)
     {
         // 65535 är högsta value i unit16_t. Alla first.blk har blivit de som default
         //  Är firsdt_blk === 65535 vet vi att vi kan använda det då inget block i fat har index 65535.
-        if (dirData[i].first_blk == 65535)
+        if (currentCwd[i].first_blk == 65535)
         {
-            dirData[i] = newFile;
+            currentCwd[i] = newFile;
             break;
         }
     }
-    disk.write(getWorkingDirectory(), (uint8_t *)&dirData);
+    disk.write(getWorkingDirectory(), (uint8_t *)&currentCwd);
 }
 
 void FS::updateFat(dir_entry currentFile)
