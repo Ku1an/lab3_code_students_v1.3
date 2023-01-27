@@ -62,7 +62,7 @@ int FS::create(std::string filepath)
         std::cout << "ERROR : Filename to large. Canceling file creation ..." << std::endl;
         return 0;
     }
-    if (checkFileName(workingDirectory, filepath))
+    if (checkFileName(getWorkingDirectory(), filepath))
     {
         std::cout << "ERROR : A file with that name does already exist. Canceling file creation ..." << std::endl;
         return 0;
@@ -91,8 +91,8 @@ int FS::create(std::string filepath)
 
     // updateFat, uppdaterar enbart fat, om vart filen ska vara osv.
     diskWrite(newFile, completeInput);
-    updateFat(newFile);
-    updateDiskDirEntry(newFile);
+    updateFat(newFile, CREATE);
+    updateDiskDirEntry(newFile, CREATE);
 
     return 0;
 }
@@ -103,7 +103,7 @@ int FS::cat(std::string filepath)
     std::cout << "FS::cat(" << filepath << ")\n";
 
     // kolla först namnet
-    if (filepath.size() >= 56 || !checkFileName(workingDirectory, filepath))
+    if (filepath.size() >= 56 || !checkFileName(getWorkingDirectory(), filepath))
     {
         std::cout << "ERROR : File does not exist. Canceling cat file ..." << std::endl;
         return 0;
@@ -111,32 +111,7 @@ int FS::cat(std::string filepath)
 
     // Först få filens dir_entry
     dir_entry currentfile = getFileDirEntry(filepath);
-    std::string output = "";
-
-    if (currentfile.size < BLOCK_SIZE)
-    {
-        char data[BLOCK_SIZE];
-        disk.read(currentfile.first_blk, (uint8_t *)data);
-        output = data;
-    }
-    else
-    {
-        // ger oss en array på alla index som fat, sedan adderar vi i output
-        int *dataBlocks;
-        dataBlocks = getFileBlockLocation(currentfile.first_blk);
-
-        for (int i = 0; i < BLOCK_SIZE / 2; i++)
-        {
-            if (dataBlocks[i] == -1)
-            {
-                break;
-            }
-            char data[BLOCK_SIZE];
-            disk.read(dataBlocks[i], (uint8_t *)data);
-            output += data;
-        }
-        delete[] dataBlocks;
-    }
+    std::string output = getFileData(currentfile);
     std::cout << output << std::endl;
     return 0;
 }
@@ -178,15 +153,15 @@ int FS::cp(std::string sourcepath, std::string destpath)
     }
 
     // Checkar att sourcepath faktiskt finns
-    if (checkFileName(workingDirectory, destpath))
+    if (!checkFileName(getWorkingDirectory(), sourcepath))
     {
-        std::cout << "ERROR : You cannot copy contents of a file. Canceling copy operation ..." << std::endl;
+        std::cout << "ERROR : You cannot copy contents of a file that does not exist. Canceling copy operation ..." << std::endl;
         return 0;
     }
-    // Checkar att destpath faktiskt finns
-    if (checkFileName(workingDirectory, destpath))
+    // Checkar att destpath faktiskt inte finns
+    if (checkFileName(getWorkingDirectory(), destpath))
     {
-        std::cout << "ERROR : A file with that name does already exist. Canceling copy operation ..." << std::endl;
+        std::cout << "ERROR : You cannot create a file with the same name as another. Canceling copy operation ..." << std::endl;
         return 0;
     }
 
@@ -196,6 +171,19 @@ int FS::cp(std::string sourcepath, std::string destpath)
         return 0;
     }
 
+    // Läs datan från filen alltså sourcepath
+    // Hämtar data om nuvarande directory
+    dir_entry fileToCopy = getFileDirEntry(sourcepath);
+
+    // Now get copy files contents
+    std::string fileData = getFileData(fileToCopy);
+
+    // nu skapar vi den. Och gör nodvändiga saker.
+    dir_entry newFile = initDirEntry(destpath, fileData.size(), TYPE_FILE);
+    diskWrite(newFile, fileData);
+    updateFat(newFile, CREATE);
+    updateDiskDirEntry(newFile, CREATE);
+
     return 0;
 }
 
@@ -204,6 +192,33 @@ int FS::cp(std::string sourcepath, std::string destpath)
 int FS::mv(std::string sourcepath, std::string destpath)
 {
     std::cout << "FS::mv(" << sourcepath << "," << destpath << ")\n";
+
+    // Error checks
+
+    if (destpath.size() >= 56)
+    {
+        std::cout << "ERROR : New filename to large. Canceling rename operation ..." << std::endl;
+        return 0;
+    }
+
+    // Checkar att sourcepath faktiskt finns
+    if (!checkFileName(getWorkingDirectory(), sourcepath))
+    {
+        std::cout << "ERROR : You cannot rename a file that does not exist. Canceling rename operation ..." << std::endl;
+        return 0;
+    }
+    // Checkar att destpath faktiskt inte finns
+    if (checkFileName(getWorkingDirectory(), destpath))
+    {
+        std::cout << "ERROR : You cannot create a file with the same name as another. Canceling rename operation ..." << std::endl;
+        return 0;
+    }
+
+    dir_entry currentFile = getFileDirEntry(sourcepath);
+    strcpy(currentFile.file_name, destpath.c_str());
+    // NU ska vi uppdater dir_entryn i disken.
+    updateDiskDirEntry(currentFile, UPDATE);
+
     return 0;
 }
 
@@ -211,6 +226,20 @@ int FS::mv(std::string sourcepath, std::string destpath)
 int FS::rm(std::string filepath)
 {
     std::cout << "FS::rm(" << filepath << ")\n";
+
+    // Först error checks
+    if (!checkFileName(getWorkingDirectory(), filepath))
+    {
+        std::cout << "ERROR : A file with that name does not exist. Canceling file deleting ..." << std::endl;
+        return 0;
+    }
+
+    // Vi har alltså fått en fil som ska bortas, vad ska ändras?
+    // FAT måste uppdateras och Nuvarande dir måste uppdateras
+    dir_entry fileToDelete = getFileDirEntry(filepath);
+    updateFat(fileToDelete, DELETE);
+    updateDiskDirEntry(fileToDelete, DELETE);
+
     return 0;
 }
 
@@ -219,6 +248,45 @@ int FS::rm(std::string filepath)
 int FS::append(std::string filepath1, std::string filepath2)
 {
     std::cout << "FS::append(" << filepath1 << "," << filepath2 << ")\n";
+    // Error checks
+
+    // Checkar att filepath1 faktiskt finns
+    if (!checkFileName(getWorkingDirectory(), filepath1))
+    {
+        std::cout << "ERROR : You cannot append from a file that does not exist. Canceling append operation ..." << std::endl;
+        return 0;
+    }
+    // Checkar att filepath2 faktiskt inte finns
+    if (!checkFileName(getWorkingDirectory(), filepath2))
+    {
+        std::cout << "ERROR : You cannot append from a file to a file that does not exist. Canceling append operation ..." << std::endl;
+        return 0;
+    }
+
+    // Get file 1 dir contents
+    dir_entry file1 = getFileDirEntry(filepath1);
+    // Then file 1 contents
+    std::string file1Data = getFileData(file1);
+
+    // Get file 2 dir contents
+    dir_entry file2 = getFileDirEntry(filepath2);
+    // Then file 2 contents
+    std::string file2Data = getFileData(file2);
+
+    // Complete data string
+    std::string completFileData = file2Data + file1Data;
+
+    // Now we shall store the new data to file2 and change fat and diskDirEntry.
+    // Smart lösning är att ta bort file2 temporärt för att sedan lägga in den på nytt med nya contents
+    updateFat(file2, DELETE);
+    updateDiskDirEntry(file2, DELETE);
+    // Nu uppdaterar vi file2 entry
+    dir_entry newFile2 = initDirEntry(file2.file_name, completFileData.size(), TYPE_FILE);
+    // Sedan gör vi en "ny" fil. De kommer ha samma plats som innan, om filen behöver mer blocks tas det givetvis hand om
+    diskWrite(newFile2, completFileData);
+    updateFat(newFile2, CREATE);
+    updateDiskDirEntry(newFile2, CREATE);
+
     return 0;
 }
 
@@ -253,6 +321,11 @@ int FS::pwd()
     }
 
     std::cout << dirPath << std::endl;
+
+    for (int i = 0; i < 20; i++)
+    {
+        std::cout << "index " << i << " : " << fat[i] << std::endl;
+    }
 
     return 0;
 }
@@ -351,6 +424,37 @@ int *FS::getFileBlockLocation(int firstblock)
     return fatIndexArr;
 }
 
+std::string FS::getFileData(dir_entry file)
+{
+    std::string stringData = "";
+
+    if (file.size < BLOCK_SIZE)
+    {
+        char data[BLOCK_SIZE];
+        disk.read(file.first_blk, (uint8_t *)data);
+        stringData = data;
+    }
+    else
+    {
+        // ger oss en array på alla index som fat, sedan adderar vi i stringData
+        int *dataBlocks;
+        dataBlocks = getFileBlockLocation(file.first_blk);
+
+        for (int i = 0; i < BLOCK_SIZE / 2; i++)
+        {
+            if (dataBlocks[i] == -1)
+            {
+                break;
+            }
+            char data[BLOCK_SIZE];
+            disk.read(dataBlocks[i], (uint8_t *)data);
+            stringData += data;
+        }
+        delete[] dataBlocks;
+    }
+    return stringData;
+}
+
 // Funktionen basically räknar ut hur många blocks en given size kommer delsa in i på disken.
 //  Detta då varje block enbart har utrymme för  4096 bytes
 int FS::getAmountOfBlocks(int size)
@@ -440,45 +544,84 @@ bool FS::checkCwdSpace()
     return cwdSpace;
 }
 
-void FS::updateDiskDirEntry(dir_entry newFile)
+void FS::updateDiskDirEntry(dir_entry newFile, int deleteOrCreate)
 {
     dir_entry currentCwd[BLOCK_SIZE / 64];
     getCurrentWorkDirectoryEntries(currentCwd);
 
-    for (int i = 0; i < BLOCK_SIZE / 64; i++)
+    if (deleteOrCreate == CREATE)
     {
-        // 65535 är högsta value i unit16_t. Alla first.blk har blivit de som default
-        //  Är firsdt_blk === 65535 vet vi att vi kan använda det då inget block i fat har index 65535.
-        if (currentCwd[i].first_blk == 65535)
+        for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
         {
-            currentCwd[i] = newFile;
-            break;
+            // 65535 är högsta value i unit16_t. Alla first.blk har blivit de som default
+            //  Är firsdt_blk === 65535 vet vi att vi kan använda det då inget block i fat har index 65535.
+            if (currentCwd[i].first_blk == 65535)
+            {
+                currentCwd[i] = newFile;
+                break;
+            }
         }
-    }
-    disk.write(getWorkingDirectory(), (uint8_t *)&currentCwd);
-}
-
-void FS::updateFat(dir_entry currentFile)
-{
-    // Update fat and Disk
-    int amountOfBlocks = getAmountOfBlocks(currentFile.size);
-    if (amountOfBlocks == 1)
-    {
-        fat[currentFile.first_blk] = FAT_EOF;
     }
     else
     {
-        int *freeFatSlots = getFreeFatSlots(currentFile.first_blk, amountOfBlocks);
-
-        for (int i = 0; i < amountOfBlocks - 1; i++)
+        for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
         {
-            fat[freeFatSlots[i]] = freeFatSlots[i + 1];
-        }
+            if (currentCwd[i].first_blk == newFile.first_blk)
+            {
+                // Då hittade vi filen som ska bortas
+                if (deleteOrCreate == DELETE)
+                {
+                    currentCwd[i].first_blk = 65535;
+                }
+                else
+                {
+                    // Update scenario
+                    currentCwd[i] = newFile;
+                }
 
-        fat[freeFatSlots[amountOfBlocks - 1]] = FAT_EOF;
-        delete[] freeFatSlots;
+                break;
+            }
+        }
     }
-    disk.write(FAT_BLOCK, (uint8_t *)&fat);
+
+    disk.write(getWorkingDirectory(), (uint8_t *)&currentCwd);
+}
+
+void FS::updateFat(dir_entry currentFile, int deleteOrCreate)
+{
+    // Update fat and Disk
+    int amountOfBlocks = getAmountOfBlocks(currentFile.size);
+    if (deleteOrCreate)
+    {
+        if (amountOfBlocks == 1)
+        {
+            fat[currentFile.first_blk] = FAT_EOF;
+        }
+        else
+        {
+            int *freeFatSlots = getFreeFatSlots(currentFile.first_blk, amountOfBlocks);
+
+            for (int i = 0; i < amountOfBlocks - 1; i++)
+            {
+                fat[freeFatSlots[i]] = freeFatSlots[i + 1];
+            }
+
+            fat[freeFatSlots[amountOfBlocks - 1]] = FAT_EOF;
+            delete[] freeFatSlots;
+        }
+        disk.write(FAT_BLOCK, (uint8_t *)&fat);
+    }
+    else
+    {
+        // uppdatera fat på ett sådant sätt som tar bort filen från fat
+        int *fatLocation = getFileBlockLocation(currentFile.first_blk);
+        for (int i = 0; i < amountOfBlocks; i++)
+        {
+            fat[fatLocation[i]] = FAT_FREE;
+        }
+        delete[] fatLocation;
+        disk.write(FAT_BLOCK, (uint8_t *)&fat);
+    }
 }
 
 void FS::diskWrite(dir_entry currentDir, std::string data)

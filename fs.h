@@ -16,6 +16,10 @@
 #define WRITE 0x02
 #define EXECUTE 0x01
 
+#define UPDATE 2
+#define CREATE 1
+#define DELETE 0
+
 struct dir_entry
 {
     char file_name[56];         // name of the file / sub-directory
@@ -48,8 +52,11 @@ private:
     int *getFreeFatSlots(int firstBlock, int amountOfBlocks);
     // Returnerar första lediga index i fat.
     int getFirstFreeFatBlock(int16_t fat[BLOCK_SIZE / 2]);
+
     // Returnerar en array av de index i disken som filen har sin data i från fat.
     int *getFileBlockLocation(int firstblock);
+    // Returnerar en fils data, exempelvis textn i,
+    std::string getFileData(dir_entry file);
     // Sätter given array av dir_entrys till data som består av de nuvarande.
     void getCurrentWorkDirectoryEntries(dir_entry *currentWorkDir);
     // Returnerar en fils dir_entry
@@ -57,9 +64,9 @@ private:
     // Skriver til disken
     void diskWrite(dir_entry currentFile, std::string data);
     // Updaterar fat, används när vi skrivit något till disken , eller raderat, beror på!
-    void updateFat(dir_entry currentFile);
+    void updateFat(dir_entry currentFile, int deleteOrCreate);
     // Uppdaterar nuvarnde working directory dir_entryies
-    void updateDiskDirEntry(dir_entry newFile);
+    void updateDiskDirEntry(dir_entry newFile, int deleteOrCreate);
     // Kontrollera om ett namn är giltigt för filen.
     bool checkFileName(int currentWorkDir, std::string filename);
     // Kontrollerar om det finns utrymme för fil i nuvarande workingdirectory.
