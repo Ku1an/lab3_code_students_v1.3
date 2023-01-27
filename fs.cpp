@@ -23,12 +23,14 @@ int FS::format()
     std::cout << "FS::format()\n";
     // Skapar root entry i disken
     dir_entry currentDirectory[BLOCK_SIZE / sizeof(dir_entry)];
-    dir_entry root = initDirEntry("/", 0, TYPE_DIR);
+
+    // Behöver inte skriva root i block
+    /*dir_entry root = initDirEntry("/", 0, TYPE_DIR);
     root.first_blk = 0;
 
     // Array med alla entries i, vet ej om de är så men enda logiska enligt mig
     // När man ska ta reda på saker så loopar man i denna bara
-    currentDirectory[0] = root;
+    currentDirectory[0] = root;*/
 
     // Init the blocks in fat
     fat[ROOT_BLOCK] = FAT_EOF;
@@ -215,9 +217,16 @@ int FS::cd(std::string dirpath)
 int FS::pwd()
 {
     std::cout << "FS::pwd()\n";
-    dir_entry currentCwd[BLOCK_SIZE / 64];
-    getCurrentWorkDirectory(currentCwd);
-    std::cout << currentCwd->file_name << std::endl;
+
+    std::string dirPath = "/";
+    if (getWorkingDirectory() != ROOT_BLOCK)
+    {
+        dir_entry currentCwd[BLOCK_SIZE / 64];
+        getCurrentWorkDirectoryEntries(currentCwd);
+        dirPath = currentCwd->file_name;
+    }
+
+    std::cout << dirPath << std::endl;
 
     return 0;
 }
@@ -356,7 +365,7 @@ dir_entry FS::getFileDirEntry(std::string fileName)
     }
     return file;
 }
-void FS::getCurrentWorkDirectory(dir_entry *currentWorkDir)
+void FS::getCurrentWorkDirectoryEntries(dir_entry *currentWorkDir)
 {
     dir_entry dirData[BLOCK_SIZE / 64];
     disk.read(getWorkingDirectory(), (uint8_t *)dirData);
@@ -409,7 +418,7 @@ void FS::updateDiskDirEntry(dir_entry newFile)
 {
     dir_entry dirData[BLOCK_SIZE / 64];
     disk.read(getWorkingDirectory(), (uint8_t *)dirData);
-    for (int i = 1; i < BLOCK_SIZE / 64; i++)
+    for (int i = 0; i < BLOCK_SIZE / 64; i++)
     {
         // 65535 är högsta value i unit16_t. Alla first.blk har blivit de som default
         //  Är firsdt_blk === 65535 vet vi att vi kan använda det då inget block i fat har index 65535.

@@ -51,7 +51,7 @@ private:
     // Returnerar en array av de index i disken som filen har sin data i från fat.
     int *getFileBlockLocation(int firstblock);
     // Sätter given array av dir_entrys till data som består av de nuvarande.
-    void getCurrentWorkDirectory(dir_entry *currentWorkDir);
+    void getCurrentWorkDirectoryEntries(dir_entry *currentWorkDir);
     // Returnerar en fils dir_entry
     dir_entry getFileDirEntry(std::string fileName);
     // Skriver til disken
