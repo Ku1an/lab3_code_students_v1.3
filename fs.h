@@ -1,6 +1,9 @@
 #include <iostream>
 #include <cstdint>
 #include "disk.h"
+#include <vector>
+#include <string.h>
+#include <sstream>
 
 #ifndef __FS_H__
 #define __FS_H__
@@ -36,12 +39,13 @@ private:
     // size of a FAT entry is 2 bytes
     int16_t fat[BLOCK_SIZE / 2];
     int workingDirectory;
-    const int DISKBLOCKS = BLOCK_SIZE / 2;
+    int tempCwd;
 
-    // Funktioner nedan
-
+    // Viktiga
     void setWorkingDirectory(int newWorkingDirectory) { workingDirectory = newWorkingDirectory; }
     int getWorkingDirectory() { return workingDirectory; }
+    void setTempCwd(int newTmp) { tempCwd = newTmp; }
+    int getTempCwd() { return tempCwd; }
 
     dir_entry initDirEntry(std::string name, uint32_t sizeOfFile, uint8_t fileType);
     // Setters
@@ -61,12 +65,20 @@ private:
     void getCurrentWorkDirectoryEntries(dir_entry *currentWorkDir, int workdirectory);
     // Returnerar en fils dir_entry
     dir_entry getFileDirEntry(std::string fileName);
+    // Returnar en vektor med all data i pathen.
+    std::vector<std::string> getAbsoluteFilepath(std::string filepath);
+    // Retunerar den work directory som kommer vara intressant, om -1 funkar de inte helt enkelt
+    int testAbsoluteFilepath(std::vector<std::string> filepathcontents);
+
+    // Returnerar en string av nuvarande pwd
+    std::string
+    getPwd();
     // Skriver til disken
     void diskWrite(dir_entry currentFile, std::string data);
     // Updaterar fat, används när vi skrivit något till disken , eller raderat, beror på!
     void updateFat(dir_entry currentFile, int deleteOrCreate);
     // Uppdaterar nuvarnde working directory dir_entryies
-    void updateDiskDirEntry(dir_entry newFile, int deleteOrCreate);
+    void updateDiskDirEntry(dir_entry newFile, int deleteOrCreate, int cwd);
     // Kontrollera om ett namn är giltigt för filen.
     bool checkFileName(int currentWorkDir, std::string filename);
     // Kontrollerar om en given directory är tom eller ej
@@ -82,6 +94,7 @@ public:
     // create <filepath> creates a new file on the disk, the data content is
     // written on the following rows (ended with an empty row)
     int create(std::string filepath);
+    int create(std::string filepath, std::string input, int tempWorkDir);
     // cat <filepath> reads the content of a file and prints it on the screen
     int cat(std::string filepath);
     // ls lists the content in the current directory (files and sub-directories)

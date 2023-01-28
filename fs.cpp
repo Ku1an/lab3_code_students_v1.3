@@ -1,7 +1,4 @@
-#include <iostream>
 #include "fs.h"
-#include <string.h>
-#include <vector>
 
 FS::FS()
 {
@@ -85,7 +82,18 @@ int FS::create(std::string filepath)
     // updateFat, uppdaterar enbart fat, om vart filen ska vara osv.
     diskWrite(newFile, completeInput);
     updateFat(newFile, CREATE);
-    updateDiskDirEntry(newFile, CREATE);
+    updateDiskDirEntry(newFile, CREATE, getWorkingDirectory());
+
+    return 0;
+}
+
+int FS::create(std::string filepath, std::string input, int tempWorkDir)
+{
+    dir_entry newFile = initDirEntry(filepath, input.size(), TYPE_FILE);
+
+    diskWrite(newFile, input);
+    updateFat(newFile, CREATE);
+    updateDiskDirEntry(newFile, CREATE, tempWorkDir);
 
     return 0;
 }
@@ -115,7 +123,7 @@ int FS::cat(std::string filepath)
     return 0;
 }
 
-// ls lists the content in the currect directory (files and sub-directories)
+// ls lists the content in the current directory (files and sub-directories)
 int FS::ls()
 {
     std::cout << "FS::ls()\n";
@@ -193,24 +201,22 @@ int FS::cp(std::string sourcepath, std::string destpath)
         {
             // Vi vet att de är en dir
             dir_entry fileToCopy = getFileDirEntry(sourcepath);
-
-            // Now get copy files contents
             std::string fileData = getFileData(fileToCopy);
-            dir_entry newFile = initDirEntry(sourcepath, fileData.size(), TYPE_FILE);
-
-            int currentCWD = getWorkingDirectory();
-            setWorkingDirectory(destPath.first_blk);
-            if (checkCwdSpace())
+            if (!checkFileName(destPath.first_blk, fileToCopy.file_name))
             {
-                diskWrite(newFile, fileData);
-                updateFat(newFile, CREATE);
-                updateDiskDirEntry(newFile, CREATE);
+                if (checkCwdSpace())
+                {
+                    create(sourcepath, fileData, destPath.first_blk);
+                }
+                else
+                {
+                    std::cout << "ERROR : No place in that directory. Canceling copy operation ..." << std::endl;
+                }
             }
             else
             {
-                std::cout << "ERROR : No place in that directory. Canceling copy operation ..." << std::endl;
+                std::cout << "ERROR : A file with that name does already exist. Canceling copy operation ..." << std::endl;
             }
-            setWorkingDirectory(currentCWD);
             return 0;
         }
     }
@@ -224,15 +230,9 @@ int FS::cp(std::string sourcepath, std::string destpath)
     // Läs datan från filen alltså sourcepath
     // Hämtar data om nuvarande directory
     dir_entry fileToCopy = getFileDirEntry(sourcepath);
-
-    // Now get copy files contents
     std::string fileData = getFileData(fileToCopy);
 
-    // nu skapar vi den. Och gör nodvändiga saker.
-    dir_entry newFile = initDirEntry(destpath, fileData.size(), TYPE_FILE);
-    diskWrite(newFile, fileData);
-    updateFat(newFile, CREATE);
-    updateDiskDirEntry(newFile, CREATE);
+    create(destpath, fileData, getWorkingDirectory());
 
     return 0;
 }
@@ -259,47 +259,54 @@ int FS::mv(std::string sourcepath, std::string destpath)
     }
 
     // Checkar att destpath
-    if (checkFileName(getWorkingDirectory(), destpath))
+    dir_entry destPath = getFileDirEntry(destpath);
+
+    if (checkFileName(getWorkingDirectory(), destpath) && destPath.type != TYPE_DIR)
     {
-        dir_entry destPath = getFileDirEntry(destpath);
-        // Kontrollera om destpath är fil eller dir
-        if (destPath.type == TYPE_FILE)
+        // Kontrollera om destpath existerar och att de är en fil
+
+        std::cout << "ERROR : You cannot rename a file with the same name as another. Canceling rename operation ..." << std::endl;
+        return 0;
+    }
+
+    // Kan vara dir, kan vara file, vet ej än
+    int currentCwd = getWorkingDirectory();
+
+    if (destPath.type == TYPE_DIR)
+    {
+        dir_entry currentFile = getFileDirEntry(sourcepath);
+        std::string fileData = getFileData(currentFile);
+        // Sätt temp working dir
+        setTempCwd(destPath.first_blk);
+        int tempCwd = getTempCwd();
+
+        if (!checkFileName(tempCwd, currentFile.file_name))
         {
-            // Om det är en existerande fil gör vi inget o returnerar en error
-            std::cout << "ERROR : You cannot rename a file with the same name as another. Canceling rename operation ..." << std::endl;
-            return 0;
-        }
-        else
-        {
-            dir_entry currentFile = getFileDirEntry(sourcepath);
-            std::string fileData = getFileData(currentFile);
-            // Sätt temp working dir
-            updateDiskDirEntry(currentFile, DELETE);
-            int currentCwd = getWorkingDirectory();
 
             // Critical section, funktionerna bygger på cwd
-            setWorkingDirectory(destPath.first_blk);
             if (checkCwdSpace())
             {
-                updateDiskDirEntry(currentFile, DELETE);
-                updateDiskDirEntry(currentFile, CREATE);
-                setWorkingDirectory(currentCwd);
+                updateDiskDirEntry(currentFile, DELETE, currentCwd);
+                updateDiskDirEntry(currentFile, CREATE, tempCwd);
             }
             else
             {
-                setWorkingDirectory(currentCwd);
-                std::cout << "ERROR : That sub-dir is full. Canceling rename operation ..." << std::endl;
-                updateDiskDirEntry(currentFile, CREATE);
+                std::cout << "ERROR : That sub-dir is full. Canceling move operation ..." << std::endl;
             }
-            return 0;
+        }
+        else
+        {
+            std::cout << "ERROR : A file with that name does already exist in that directory. Canceling move operation ..." << std::endl;
         }
     }
-
-    // Renamar fillen bara
-    dir_entry currentFile = getFileDirEntry(sourcepath);
-    strcpy(currentFile.file_name, destpath.c_str());
-    // NU ska vi uppdater dir_entryn i disken.
-    updateDiskDirEntry(currentFile, UPDATE);
+    else
+    {
+        // Renamar fillen bara
+        dir_entry currentFile = getFileDirEntry(sourcepath);
+        strcpy(currentFile.file_name, destpath.c_str());
+        // NU ska vi uppdater dir_entryn i disken.
+        updateDiskDirEntry(currentFile, UPDATE, currentCwd);
+    }
 
     return 0;
 }
@@ -318,12 +325,13 @@ int FS::rm(std::string filepath)
 
     // Vi har alltså fått en fil som ska bortas, vad ska ändras?
     // FAT måste uppdateras och Nuvarande dir måste uppdateras
+    int cwd = getWorkingDirectory();
 
     dir_entry fileToDelete = getFileDirEntry(filepath);
     if (fileToDelete.type == TYPE_FILE)
     {
         updateFat(fileToDelete, DELETE);
-        updateDiskDirEntry(fileToDelete, DELETE);
+        updateDiskDirEntry(fileToDelete, DELETE, cwd);
     }
     else
     {
@@ -331,7 +339,7 @@ int FS::rm(std::string filepath)
         if (checkEmptyDirectory(fileToDelete))
         {
             updateFat(fileToDelete, DELETE);
-            updateDiskDirEntry(fileToDelete, DELETE);
+            updateDiskDirEntry(fileToDelete, DELETE, cwd);
         }
         else
         {
@@ -366,25 +374,17 @@ int FS::append(std::string filepath1, std::string filepath2)
     dir_entry file1 = getFileDirEntry(filepath1);
     // Then file 1 contents
     std::string file1Data = getFileData(file1);
-
     // Get file 2 dir contents
     dir_entry file2 = getFileDirEntry(filepath2);
     // Then file 2 contents
     std::string file2Data = getFileData(file2);
-
     // Complete data string
     std::string completFileData = file2Data + file1Data;
 
     // Now we shall store the new data to file2 and change fat and diskDirEntry.
-    // Smart lösning är att ta bort file2 temporärt för att sedan lägga in den på nytt med nya contents
-    updateFat(file2, DELETE);
-    updateDiskDirEntry(file2, DELETE);
-    // Nu uppdaterar vi file2 entry
-    dir_entry newFile2 = initDirEntry(file2.file_name, completFileData.size(), TYPE_FILE);
-    // Sedan gör vi en "ny" fil. De kommer ha samma plats som innan, om filen behöver mer blocks tas det givetvis hand om
-    diskWrite(newFile2, completFileData);
-    updateFat(newFile2, CREATE);
-    updateDiskDirEntry(newFile2, CREATE);
+    // Smart lösning är att ta bort file2 temporärt för att sedan skappa den på nytt med nya contentes
+    rm(file2.file_name);
+    create(file2.file_name, completFileData, getWorkingDirectory());
 
     return 0;
 }
@@ -425,7 +425,7 @@ int FS::mkdir(std::string dirpath)
 
     // updateFat, uppdaterar enbart fat, om vart filen ska vara osv.
     updateFat(newDirEntry, CREATE);
-    updateDiskDirEntry(newDirEntry, CREATE);
+    updateDiskDirEntry(newDirEntry, CREATE, getWorkingDirectory());
 
     return 0;
 }
@@ -434,6 +434,16 @@ int FS::mkdir(std::string dirpath)
 int FS::cd(std::string dirpath)
 {
     std::cout << "FS::cd(" << dirpath << ")\n";
+
+    // Get dirPath contents
+    std::vector<std::string> pathname = getAbsoluteFilepath(dirpath);
+
+    // check if dirpath actually exist
+    int subDirCwd = testAbsoluteFilepath(pathname);
+    if (subDirCwd != -1)
+    {
+        setWorkingDirectory(subDirCwd);
+    }
 
     if (!checkFileName(getWorkingDirectory(), dirpath) && dirpath != "..")
     {
@@ -449,7 +459,6 @@ int FS::cd(std::string dirpath)
         std::cout << "ERROR : You cannot change working directory to a file. Canceling directory navigation ..." << std::endl;
         return 0;
     }
-
     if (dirpath == "..")
     {
         dir_entry currentCWD[BLOCK_SIZE / sizeof(dir_entry)];
@@ -458,6 +467,7 @@ int FS::cd(std::string dirpath)
     }
     else
     {
+        std::cout << getDir.first_blk;
         setWorkingDirectory(getDir.first_blk);
     }
 
@@ -470,52 +480,9 @@ int FS::pwd()
 {
     std::cout << "FS::pwd()\n";
 
-    std::string dirPath = "";
+    std::string output = getPwd();
 
-    if (getWorkingDirectory() != ROOT_BLOCK)
-    {
-        dir_entry currentCwd[BLOCK_SIZE / 64];
-        getCurrentWorkDirectoryEntries(currentCwd, getWorkingDirectory());
-
-        // Vi använder oss av vekotr då det är smidigt när vi inte vet hur många subdirs vi har att göra med
-        std::vector<std::string> allSubDirs;
-
-        int currentBlock = getWorkingDirectory();
-        int lastBlock = currentCwd[0].first_blk;
-
-        while (currentBlock != ROOT_BLOCK)
-        {
-            dir_entry lastDirectory[BLOCK_SIZE / sizeof(dir_entry)];
-            // Funkitonen nedans namn är lite missvisande, det är faktiskt inte nuvarnde cwd som vi hämtar data från.
-            getCurrentWorkDirectoryEntries(lastDirectory, lastBlock);
-
-            for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
-            {
-                if (lastDirectory[i].first_blk == currentBlock)
-                {
-                    allSubDirs.push_back(lastDirectory[i].file_name);
-                    break;
-                }
-            }
-            currentBlock = lastBlock;
-            lastBlock = lastDirectory[0].first_blk;
-        }
-
-        // Vi läser från vektorn, baklänges då pathen blir skriven på de visset
-        // detta då vi lagt till namn allt eftersom tills vi är i root.
-        for (int i = 0; i <= allSubDirs.size(); i++)
-        {
-            dirPath.append("/" + allSubDirs.back());
-            allSubDirs.pop_back();
-        }
-    }
-    else
-    {
-        // Root cwd, returnerar / enkelt.
-        dirPath = "/";
-    }
-
-    std::cout << dirPath << std::endl;
+    std::cout << output << std::endl;
 
     /*for (int i = 0; i < 20; i++)
     {
@@ -542,7 +509,7 @@ dir_entry FS::initDirEntry(std::string name, uint32_t sizeOfFile, uint8_t fileTy
     currentDir.size = sizeOfFile;
     currentDir.first_blk = getFirstFreeFatBlock(fat);
     currentDir.type = fileType;
-    currentDir.access_rights = 0x06;
+    currentDir.access_rights = READ | WRITE;
 
     return currentDir;
 }
@@ -556,7 +523,7 @@ int FS::getFirstFreeFatBlock(int16_t fatTable[BLOCK_SIZE / 2])
     //  Det betyder att faten är full. Om de inte går ska de givetvis hanteras.
     int first_empty_index = -1;
 
-    for (int i = 2; i < DISKBLOCKS; i++)
+    for (int i = 2; i < BLOCK_SIZE / 2; i++)
     {
         // Hittar vi slutar vi leta.
         if (fatTable[i] == FAT_FREE)
@@ -575,7 +542,7 @@ int *FS::getFreeFatSlots(int firstBlock, int amountOfBlocks)
     int *fatSlots = new int[amountOfBlocks];
     fatSlots[0] = firstBlock;
 
-    for (int i = firstBlock + 1; i < DISKBLOCKS; i++)
+    for (int i = firstBlock + 1; i < BLOCK_SIZE / 2; i++)
     {
         if (fat[i] == FAT_FREE)
         {
@@ -698,6 +665,70 @@ void FS::getCurrentWorkDirectoryEntries(dir_entry *currentWorkDir, int workdirec
     memcpy(currentWorkDir, dirData, sizeof(dirData));
 }
 
+std::vector<std::string> FS::getAbsoluteFilepath(std::string filepath)
+{
+    // Relative filepath, add current working directory
+    char first_char = filepath[0];
+    if (first_char != '/')
+        filepath = getPwd() + "/" + filepath;
+
+    std::vector<std::string> tmp_filepath_content;
+    std::vector<std::string> filepath_content;
+    std::string tmp_filepath;
+    std::stringstream ss(filepath);
+    // separate filepath by '/', skip '.' in vector: tmp_filepath_content
+    while (!ss.eof())
+    {
+        std::getline(ss, tmp_filepath, '/');
+        if (!tmp_filepath.empty() && tmp_filepath != ".")
+            tmp_filepath_content.push_back(tmp_filepath);
+    }
+    for (int i = 0; i < tmp_filepath_content.size(); i++)
+    {
+        if (tmp_filepath_content[i] == "..")
+        {
+            for (int j = i - 1; j >= 0; j--)
+            {
+                if (tmp_filepath_content[j] != "..")
+                {
+                    tmp_filepath_content[j] = "..";
+                    break;
+                }
+            }
+        }
+    }
+    for (int i = 0; i < tmp_filepath_content.size(); i++)
+    {
+        if (tmp_filepath_content[i] != "..")
+            filepath_content.push_back(tmp_filepath_content[i]);
+    }
+
+    return filepath_content;
+}
+
+int FS::testAbsoluteFilepath(std::vector<std::string> filepathcontents)
+{
+    // Bara cd tänkt
+    // Loopa igenom vectorn för att testa alla subdirs.(om de finns)
+    int currentCwd = ROOT_BLOCK;
+
+    for (int i = 0; i < filepathcontents.size(); i++)
+    {
+        dir_entry cwd[BLOCK_SIZE / sizeof(dir_entry)];
+        getCurrentWorkDirectoryEntries(cwd, currentCwd);
+        if (!checkFileName(currentCwd, filepathcontents[i]))
+        {
+            return -1;
+        }
+        dir_entry currentDir = getFileDirEntry(filepathcontents[i]);
+        if (currentDir.type == TYPE_DIR)
+        {
+            currentCwd = currentDir.first_blk;
+        }
+    }
+    return currentCwd;
+}
+
 // Returnerar sant om ett filnamn finns,
 bool FS::checkFileName(int currentWorkDir, std::string filename)
 {
@@ -705,7 +736,7 @@ bool FS::checkFileName(int currentWorkDir, std::string filename)
 
     // Läs från disk o få data.
     dir_entry currentCwd[BLOCK_SIZE / 64];
-    getCurrentWorkDirectoryEntries(currentCwd, getWorkingDirectory());
+    getCurrentWorkDirectoryEntries(currentCwd, currentWorkDir);
 
     for (int i = 0; i < BLOCK_SIZE / 64; i++)
     {
@@ -717,6 +748,55 @@ bool FS::checkFileName(int currentWorkDir, std::string filename)
     }
 
     return nameExist;
+}
+
+std::string FS::getPwd()
+{
+    std::string pwd = "";
+    int cwd = getWorkingDirectory();
+    if (cwd != ROOT_BLOCK)
+    {
+        dir_entry currentCwd[BLOCK_SIZE / 64];
+        getCurrentWorkDirectoryEntries(currentCwd, cwd);
+
+        // Vi använder oss av vekotr då det är smidigt när vi inte vet hur många subdirs vi har att göra med
+        std::vector<std::string> allSubDirs;
+
+        int currentBlock = cwd;
+        int lastBlock = currentCwd[0].first_blk;
+
+        while (currentBlock != ROOT_BLOCK)
+        {
+            dir_entry lastDirectory[BLOCK_SIZE / sizeof(dir_entry)];
+            // Funkitonen nedans namn är lite missvisande, det är faktiskt inte nuvarnde cwd som vi hämtar data från.
+            getCurrentWorkDirectoryEntries(lastDirectory, lastBlock);
+
+            for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+            {
+                if (lastDirectory[i].first_blk == currentBlock)
+                {
+                    allSubDirs.push_back(lastDirectory[i].file_name);
+                    break;
+                }
+            }
+            currentBlock = lastBlock;
+            lastBlock = lastDirectory[0].first_blk;
+        }
+
+        // Vi läser från vektorn, baklänges då pathen blir skriven på de visset
+        // detta då vi lagt till namn allt eftersom tills vi är i root.
+        // Loop baklänges
+        for (int i = allSubDirs.size() - 1; i >= 0; i--)
+        {
+            pwd += "/" + allSubDirs[i];
+        }
+    }
+    else
+    {
+        // Root cwd, returnerar / enkelt.
+        pwd = "/";
+    }
+    return pwd;
 }
 
 bool FS::checkCwdSpace()
@@ -760,10 +840,10 @@ bool FS::checkEmptyDirectory(dir_entry dirname)
     return empty;
 }
 
-void FS::updateDiskDirEntry(dir_entry newFile, int deleteOrCreate)
+void FS::updateDiskDirEntry(dir_entry newFile, int deleteOrCreate, int cwd)
 {
     dir_entry currentCwd[BLOCK_SIZE / 64];
-    getCurrentWorkDirectoryEntries(currentCwd, getWorkingDirectory());
+    getCurrentWorkDirectoryEntries(currentCwd, cwd);
 
     if (deleteOrCreate == CREATE)
     {
@@ -800,13 +880,14 @@ void FS::updateDiskDirEntry(dir_entry newFile, int deleteOrCreate)
         }
     }
 
-    disk.write(getWorkingDirectory(), (uint8_t *)&currentCwd);
+    disk.write(cwd, (uint8_t *)&currentCwd);
 }
 
 void FS::updateFat(dir_entry currentFile, int deleteOrCreate)
 {
     // Update fat and Disk
     int amountOfBlocks = getAmountOfBlocks(currentFile.size);
+    // VI går in i denna if sats om  deleteOrCreate == CREATE då de är 1.
     if (deleteOrCreate)
     {
         if (amountOfBlocks == 1)
