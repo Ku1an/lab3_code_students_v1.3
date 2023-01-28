@@ -58,7 +58,7 @@ private:
     // Returnerar en fils data, exempelvis textn i,
     std::string getFileData(dir_entry file);
     // Sätter given array av dir_entrys till data som består av de nuvarande.
-    void getCurrentWorkDirectoryEntries(dir_entry *currentWorkDir);
+    void getCurrentWorkDirectoryEntries(dir_entry *currentWorkDir, int workdirectory);
     // Returnerar en fils dir_entry
     dir_entry getFileDirEntry(std::string fileName);
     // Skriver til disken
@@ -69,6 +69,8 @@ private:
     void updateDiskDirEntry(dir_entry newFile, int deleteOrCreate);
     // Kontrollera om ett namn är giltigt för filen.
     bool checkFileName(int currentWorkDir, std::string filename);
+    // Kontrollerar om en given directory är tom eller ej
+    bool checkEmptyDirectory(dir_entry dirname);
     // Kontrollerar om det finns utrymme för fil i nuvarande workingdirectory.
     bool checkCwdSpace();
 

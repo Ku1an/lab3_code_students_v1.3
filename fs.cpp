@@ -1,6 +1,7 @@
 #include <iostream>
 #include "fs.h"
 #include <string.h>
+#include <vector>
 
 FS::FS()
 {
@@ -23,14 +24,6 @@ int FS::format()
     std::cout << "FS::format()\n";
     // Skapar root entry i disken
     dir_entry currentDirectory[BLOCK_SIZE / sizeof(dir_entry)];
-
-    // Behöver inte skriva root i block
-    /*dir_entry root = initDirEntry("/", 0, TYPE_DIR);
-    root.first_blk = 0;
-
-    // Array med alla entries i, vet ej om de är så men enda logiska enligt mig
-    // När man ska ta reda på saker så loopar man i denna bara
-    currentDirectory[0] = root;*/
 
     // Init the blocks in fat
     fat[ROOT_BLOCK] = FAT_EOF;
@@ -64,7 +57,7 @@ int FS::create(std::string filepath)
     }
     if (checkFileName(getWorkingDirectory(), filepath))
     {
-        std::cout << "ERROR : A file with that name does already exist. Canceling file creation ..." << std::endl;
+        std::cout << "ERROR : A file/dir with that name does already exist. Canceling file creation ..." << std::endl;
         return 0;
     }
 
@@ -111,6 +104,12 @@ int FS::cat(std::string filepath)
 
     // Först få filens dir_entry
     dir_entry currentfile = getFileDirEntry(filepath);
+
+    if (currentfile.type == TYPE_DIR)
+    {
+        std::cout << "ERROR : You cannot read a directory. Canceling cat file ..." << std::endl;
+        return 0;
+    }
     std::string output = getFileData(currentfile);
     std::cout << output << std::endl;
     return 0;
@@ -122,18 +121,38 @@ int FS::ls()
     std::cout << "FS::ls()\n";
     // LÄs från nuvarande directory
     dir_entry currentCwd[BLOCK_SIZE / 64];
-    getCurrentWorkDirectoryEntries(currentCwd);
+    getCurrentWorkDirectoryEntries(currentCwd, getWorkingDirectory());
 
     std::cout << "name\t";
+    std::cout << "type\t";
     std::cout << "size" << std::endl;
 
     // nu har vi alla filler i denna, gå igenom dire och ta reda på vilka som existerar
-    for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    // I Sub directorys finns de parent_entry, vi vill inte skriv ut de till användaren
+    int startIndex = 0;
+    std::string name = currentCwd->file_name;
+    if (name == "..")
+    {
+        startIndex += 1;
+    }
+
+    for (int i = startIndex; i < BLOCK_SIZE / sizeof(dir_entry); i++)
     {
         if (currentCwd[i].first_blk != 65535)
         {
-            // då vet vi att de är en fil
-            std::cout << currentCwd[i].file_name << "\t" << currentCwd[i].size << std::endl;
+            // då vet vi att de är giltig entry
+            std::string type = "file";
+            if (currentCwd[i].type)
+            {
+                type = "dir";
+            }
+
+            std::string size = std::to_string(currentCwd[i].size);
+            if (type == "dir")
+            {
+                size = "-";
+            }
+            std::cout << currentCwd[i].file_name << "\t" << type << "\t" << size << std::endl;
         }
     }
 
@@ -161,8 +180,39 @@ int FS::cp(std::string sourcepath, std::string destpath)
     // Checkar att destpath faktiskt inte finns
     if (checkFileName(getWorkingDirectory(), destpath))
     {
-        std::cout << "ERROR : You cannot create a file with the same name as another. Canceling copy operation ..." << std::endl;
-        return 0;
+
+        dir_entry destPath = getFileDirEntry(destpath);
+        // Kontrollera om destpath är fil eller dir
+        if (destPath.type == TYPE_FILE)
+        {
+            // Om det är en existerande fil gör vi inget o returnerar en error
+            std::cout << "ERROR : You cannot create a file with the same name as another. Canceling copy operation ..." << std::endl;
+            return 0;
+        }
+        else
+        {
+            // Vi vet att de är en dir
+            dir_entry fileToCopy = getFileDirEntry(sourcepath);
+
+            // Now get copy files contents
+            std::string fileData = getFileData(fileToCopy);
+            dir_entry newFile = initDirEntry(sourcepath, fileData.size(), TYPE_FILE);
+
+            int currentCWD = getWorkingDirectory();
+            setWorkingDirectory(destPath.first_blk);
+            if (checkCwdSpace())
+            {
+                diskWrite(newFile, fileData);
+                updateFat(newFile, CREATE);
+                updateDiskDirEntry(newFile, CREATE);
+            }
+            else
+            {
+                std::cout << "ERROR : No place in that directory. Canceling copy operation ..." << std::endl;
+            }
+            setWorkingDirectory(currentCWD);
+            return 0;
+        }
     }
 
     if (!checkCwdSpace())
@@ -207,13 +257,45 @@ int FS::mv(std::string sourcepath, std::string destpath)
         std::cout << "ERROR : You cannot rename a file that does not exist. Canceling rename operation ..." << std::endl;
         return 0;
     }
-    // Checkar att destpath faktiskt inte finns
+
+    // Checkar att destpath
     if (checkFileName(getWorkingDirectory(), destpath))
     {
-        std::cout << "ERROR : You cannot create a file with the same name as another. Canceling rename operation ..." << std::endl;
-        return 0;
+        dir_entry destPath = getFileDirEntry(destpath);
+        // Kontrollera om destpath är fil eller dir
+        if (destPath.type == TYPE_FILE)
+        {
+            // Om det är en existerande fil gör vi inget o returnerar en error
+            std::cout << "ERROR : You cannot rename a file with the same name as another. Canceling rename operation ..." << std::endl;
+            return 0;
+        }
+        else
+        {
+            dir_entry currentFile = getFileDirEntry(sourcepath);
+            std::string fileData = getFileData(currentFile);
+            // Sätt temp working dir
+            updateDiskDirEntry(currentFile, DELETE);
+            int currentCwd = getWorkingDirectory();
+
+            // Critical section, funktionerna bygger på cwd
+            setWorkingDirectory(destPath.first_blk);
+            if (checkCwdSpace())
+            {
+                updateDiskDirEntry(currentFile, DELETE);
+                updateDiskDirEntry(currentFile, CREATE);
+                setWorkingDirectory(currentCwd);
+            }
+            else
+            {
+                setWorkingDirectory(currentCwd);
+                std::cout << "ERROR : That sub-dir is full. Canceling rename operation ..." << std::endl;
+                updateDiskDirEntry(currentFile, CREATE);
+            }
+            return 0;
+        }
     }
 
+    // Renamar fillen bara
     dir_entry currentFile = getFileDirEntry(sourcepath);
     strcpy(currentFile.file_name, destpath.c_str());
     // NU ska vi uppdater dir_entryn i disken.
@@ -236,9 +318,26 @@ int FS::rm(std::string filepath)
 
     // Vi har alltså fått en fil som ska bortas, vad ska ändras?
     // FAT måste uppdateras och Nuvarande dir måste uppdateras
+
     dir_entry fileToDelete = getFileDirEntry(filepath);
-    updateFat(fileToDelete, DELETE);
-    updateDiskDirEntry(fileToDelete, DELETE);
+    if (fileToDelete.type == TYPE_FILE)
+    {
+        updateFat(fileToDelete, DELETE);
+        updateDiskDirEntry(fileToDelete, DELETE);
+    }
+    else
+    {
+        // Kontrollera om directoryn är tom
+        if (checkEmptyDirectory(fileToDelete))
+        {
+            updateFat(fileToDelete, DELETE);
+            updateDiskDirEntry(fileToDelete, DELETE);
+        }
+        else
+        {
+            std::cout << "ERROR : Directory is not empty. Canceling file deleting ..." << std::endl;
+        }
+    }
 
     return 0;
 }
@@ -295,6 +394,39 @@ int FS::append(std::string filepath1, std::string filepath2)
 int FS::mkdir(std::string dirpath)
 {
     std::cout << "FS::mkdir(" << dirpath << ")\n";
+
+    if (dirpath.size() >= 56)
+    {
+        std::cout << "ERROR : Filename to large. Canceling directory creation ..." << std::endl;
+        return 0;
+    }
+    if (checkFileName(getWorkingDirectory(), dirpath))
+    {
+        std::cout << "ERROR : A file/dir with that name does already exist. Canceling directory creation ..." << std::endl;
+        return 0;
+    }
+
+    if (!checkCwdSpace())
+    {
+        std::cout << "ERROR : No place in current directory. Canceling directory creation ..." << std::endl;
+        return 0;
+    }
+
+    // Skapar en Directory entry för filen.
+    dir_entry newDirEntry = initDirEntry(dirpath, 0, TYPE_DIR);
+    // Skapar faktiskta innehåller newDirEntry har
+    dir_entry newSubDirectory[BLOCK_SIZE / 64];
+    // Sätter subdirens första dir entry som en parent
+    dir_entry parentEntry = initDirEntry("..", 0, TYPE_DIR);
+    // detta gäller för parrententry enbart
+    parentEntry.first_blk = getWorkingDirectory();
+    newSubDirectory[0] = parentEntry;
+    disk.write(newDirEntry.first_blk, (uint8_t *)&newSubDirectory);
+
+    // updateFat, uppdaterar enbart fat, om vart filen ska vara osv.
+    updateFat(newDirEntry, CREATE);
+    updateDiskDirEntry(newDirEntry, CREATE);
+
     return 0;
 }
 
@@ -302,6 +434,32 @@ int FS::mkdir(std::string dirpath)
 int FS::cd(std::string dirpath)
 {
     std::cout << "FS::cd(" << dirpath << ")\n";
+
+    if (!checkFileName(getWorkingDirectory(), dirpath) && dirpath != "..")
+    {
+        std::cout << "ERROR : A directory with that name does not exist. Canceling directory navigation ..." << std::endl;
+        return 0;
+    }
+
+    dir_entry getDir = getFileDirEntry(dirpath);
+
+    // check om det faktskt är en directory
+    if (getDir.type == TYPE_FILE)
+    {
+        std::cout << "ERROR : You cannot change working directory to a file. Canceling directory navigation ..." << std::endl;
+        return 0;
+    }
+
+    if (dirpath == "..")
+    {
+        dir_entry currentCWD[BLOCK_SIZE / sizeof(dir_entry)];
+        getCurrentWorkDirectoryEntries(currentCWD, getWorkingDirectory());
+        setWorkingDirectory(currentCWD[0].first_blk);
+    }
+    else
+    {
+        setWorkingDirectory(getDir.first_blk);
+    }
 
     return 0;
 }
@@ -312,20 +470,57 @@ int FS::pwd()
 {
     std::cout << "FS::pwd()\n";
 
-    std::string dirPath = "/";
+    std::string dirPath = "";
+
     if (getWorkingDirectory() != ROOT_BLOCK)
     {
         dir_entry currentCwd[BLOCK_SIZE / 64];
-        getCurrentWorkDirectoryEntries(currentCwd);
-        dirPath = currentCwd->file_name;
+        getCurrentWorkDirectoryEntries(currentCwd, getWorkingDirectory());
+
+        // Vi använder oss av vekotr då det är smidigt när vi inte vet hur många subdirs vi har att göra med
+        std::vector<std::string> allSubDirs;
+
+        int currentBlock = getWorkingDirectory();
+        int lastBlock = currentCwd[0].first_blk;
+
+        while (currentBlock != ROOT_BLOCK)
+        {
+            dir_entry lastDirectory[BLOCK_SIZE / sizeof(dir_entry)];
+            // Funkitonen nedans namn är lite missvisande, det är faktiskt inte nuvarnde cwd som vi hämtar data från.
+            getCurrentWorkDirectoryEntries(lastDirectory, lastBlock);
+
+            for (int i = 0; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+            {
+                if (lastDirectory[i].first_blk == currentBlock)
+                {
+                    allSubDirs.push_back(lastDirectory[i].file_name);
+                    break;
+                }
+            }
+            currentBlock = lastBlock;
+            lastBlock = lastDirectory[0].first_blk;
+        }
+
+        // Vi läser från vektorn, baklänges då pathen blir skriven på de visset
+        // detta då vi lagt till namn allt eftersom tills vi är i root.
+        for (int i = 0; i <= allSubDirs.size(); i++)
+        {
+            dirPath.append("/" + allSubDirs.back());
+            allSubDirs.pop_back();
+        }
+    }
+    else
+    {
+        // Root cwd, returnerar / enkelt.
+        dirPath = "/";
     }
 
     std::cout << dirPath << std::endl;
 
-    for (int i = 0; i < 20; i++)
+    /*for (int i = 0; i < 20; i++)
     {
         std::cout << "index " << i << " : " << fat[i] << std::endl;
-    }
+    }*/
 
     return 0;
 }
@@ -482,7 +677,7 @@ dir_entry FS::getFileDirEntry(std::string fileName)
 {
     dir_entry file;
     dir_entry currentCwd[BLOCK_SIZE / 64];
-    getCurrentWorkDirectoryEntries(currentCwd);
+    getCurrentWorkDirectoryEntries(currentCwd, getWorkingDirectory());
 
     for (int i = 0; i < BLOCK_SIZE / 64; i++)
     {
@@ -495,10 +690,11 @@ dir_entry FS::getFileDirEntry(std::string fileName)
     }
     return file;
 }
-void FS::getCurrentWorkDirectoryEntries(dir_entry *currentWorkDir)
+
+void FS::getCurrentWorkDirectoryEntries(dir_entry *currentWorkDir, int workdirectory)
 {
     dir_entry dirData[BLOCK_SIZE / 64];
-    disk.read(getWorkingDirectory(), (uint8_t *)dirData);
+    disk.read(workdirectory, (uint8_t *)dirData);
     memcpy(currentWorkDir, dirData, sizeof(dirData));
 }
 
@@ -509,7 +705,7 @@ bool FS::checkFileName(int currentWorkDir, std::string filename)
 
     // Läs från disk o få data.
     dir_entry currentCwd[BLOCK_SIZE / 64];
-    getCurrentWorkDirectoryEntries(currentCwd);
+    getCurrentWorkDirectoryEntries(currentCwd, getWorkingDirectory());
 
     for (int i = 0; i < BLOCK_SIZE / 64; i++)
     {
@@ -528,7 +724,7 @@ bool FS::checkCwdSpace()
     bool cwdSpace = false;
 
     dir_entry currentCwd[BLOCK_SIZE / 64];
-    getCurrentWorkDirectoryEntries(currentCwd);
+    getCurrentWorkDirectoryEntries(currentCwd, getWorkingDirectory());
 
     for (int i = 1; i < BLOCK_SIZE / 64; i++)
     {
@@ -544,10 +740,30 @@ bool FS::checkCwdSpace()
     return cwdSpace;
 }
 
+bool FS::checkEmptyDirectory(dir_entry dirname)
+{
+    dir_entry currentCwd[BLOCK_SIZE / 64];
+    getCurrentWorkDirectoryEntries(currentCwd, dirname.first_blk);
+    bool empty = true;
+
+    // Loop igenom hela currentCWD för att se om den är tom eller ej
+    for (int i = 1; i < BLOCK_SIZE / sizeof(dir_entry); i++)
+    {
+        if (currentCwd[i].first_blk != 65535)
+        {
+            // ingen file kan ha block 65535, om någon inte har de vet vi att de är en fil alternativt directory
+            empty = false;
+            break;
+        }
+    }
+
+    return empty;
+}
+
 void FS::updateDiskDirEntry(dir_entry newFile, int deleteOrCreate)
 {
     dir_entry currentCwd[BLOCK_SIZE / 64];
-    getCurrentWorkDirectoryEntries(currentCwd);
+    getCurrentWorkDirectoryEntries(currentCwd, getWorkingDirectory());
 
     if (deleteOrCreate == CREATE)
     {
