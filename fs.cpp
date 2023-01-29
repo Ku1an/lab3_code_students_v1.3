@@ -64,11 +64,10 @@ int FS::create(std::string filepath)
         return 0;
     }
 
-    // check if dirpath actually exist
     int subDirCwd = testAbsoluteFilepath(pathname, TYPE_FILE);
     if (subDirCwd != -1)
     {
-        std::cout << "ERROR" << std::endl;
+        std::cout << "ERROR : FILE EXISTS" << std::endl;
         return 0;
     }
 
@@ -76,7 +75,7 @@ int FS::create(std::string filepath)
     subDirCwd = testAbsoluteFilepath(pathname, TYPE_DIR);
     if (subDirCwd == -1)
     {
-        std::cout << "ERROR" << std::endl;
+        std::cout << "ERROR : Directory does not exist " << std::endl;
         return 0;
     }
 
@@ -84,6 +83,27 @@ int FS::create(std::string filepath)
     {
         std::cout << "ERROR : Directory is FULL." << std::endl;
         return 0;
+    }
+
+    if (checkFileName(subDirCwd, filename))
+    {
+        std::cout << "ERROR : Directory with that name exists." << std::endl;
+        return 0;
+    }
+
+    if (subDirCwd != 0)
+    {
+        std::string directoryName = pathname.back();
+        // Check accesss in map
+        dir_entry currentCwd[BLOCK_SIZE / 64];
+        getCurrentWorkDirectoryEntries(currentCwd, subDirCwd);
+        dir_entry subDirectory = getFileDirEntry(directoryName, currentCwd[0].first_blk);
+        std::string accessRights = getAccessRights(subDirectory);
+        if (accessRights.find('w') == std::string::npos && subDirCwd != 0)
+        {
+            std::cout << "ERROR : No permission to do that." << std::endl;
+            return 0;
+        }
     }
 
     std::string completeInput;
@@ -160,6 +180,20 @@ int FS::ls()
     dir_entry currentCwd[BLOCK_SIZE / 64];
     getCurrentWorkDirectoryEntries(currentCwd, getWorkingDirectory());
 
+    std::vector<std::string> pathname = getAbsoluteFilepath(getPwd());
+    if (!pathname.empty())
+    {
+        std::string subname = pathname.back();
+
+        dir_entry subDir = getFileDirEntry(subname, currentCwd->first_blk);
+        std::string accessRights = getAccessRights(subDir);
+        if (accessRights.find('r') == std::string::npos)
+        {
+            std::cout << "ERROR : No permission to read this directory ." << std::endl;
+            return 0;
+        }
+    }
+
     std::cout << "name\t";
     std::cout << "type\t";
     std::cout << "accessrights\t";
@@ -207,15 +241,14 @@ int FS::cp(std::string sourcepath, std::string destpath)
     std::vector<std::string> pathname1 = getAbsoluteFilepath(sourcepath);
     std::vector<std::string> pathname2 = getAbsoluteFilepath(destpath);
     std::string filename = pathname1.back();
-    std::string temp2;
-
     // sourcepath
     int subdircwd1 = testAbsoluteFilepath(pathname1, TYPE_FILE);
     int subdircwd2;
     int subdircwd3;
+
     if (pathname2.empty())
     {
-        // root scenario
+        // root scenario, om användaren skriver / , . eller .. etc
         subdircwd2 = 0;
         subdircwd3 = -1;
     }
@@ -223,66 +256,104 @@ int FS::cp(std::string sourcepath, std::string destpath)
     {
         subdircwd2 = testAbsoluteFilepath(pathname2, TYPE_DIR);
         subdircwd3 = testAbsoluteFilepath(pathname2, TYPE_FILE);
-        temp2 = pathname2.back();
     }
 
     // path 1 MÅSTEE! finnas då det är den fil vi ska behandla
     if (subdircwd1 == -1)
     {
-        std::cout << "ERROR : FILE DOES NO EXIST" << std::endl;
+        std::cout << "ERROR : FILE DOES NOT EXIST" << std::endl;
+        return 0;
+    }
+    // Check file access, cannot cp file if it does not have R rights
+    dir_entry currentCwd[BLOCK_SIZE / 64];
+    if (subdircwd1 != 0)
+    {
+        getCurrentWorkDirectoryEntries(currentCwd, subdircwd1);
+    }
+    currentCwd->first_blk = subdircwd1;
+    dir_entry filedir = getFileDirEntry(filename, currentCwd->first_blk);
+    std::string accessRights = getAccessRights(filedir);
+    if (accessRights.find('r') == std::string::npos)
+    {
+        std::cout << "ERROR : No rights to copy this file ." << std::endl;
         return 0;
     }
 
     if (subdircwd3 != -1)
     {
         // FILE EXIST, du kan inte move tille en fil (or rename)
-        std::cout << "ERROR : You cannot cp to a filename that already exist" << std::endl;
+        std::cout << "ERROR : You cannot cp into a file" << std::endl;
+        return 0;
+    }
+    if (subdircwd2 == -1)
+    {
+        // check if subdircwd actually is -1 and is not a rename case
+        std::string possibleName = pathname2.back();
+        pathname2.pop_back();
+        pathname1.pop_back();
+        // Now lets check if it actually is a -1
+        if (pathname1 == pathname2)
+        {
+            // Means same directory basically
+            if (subdircwd1 != 0)
+            {
+                dir_entry currentCwd[BLOCK_SIZE / 64];
+                getCurrentWorkDirectoryEntries(currentCwd, subdircwd1);
+
+                dir_entry subDir = getFileDirEntry(pathname2.back(), currentCwd->first_blk);
+                std::string accessRights = getAccessRights(subDir);
+                if (accessRights.find('w') == std::string::npos)
+                {
+                    std::cout << "ERROR : No permission to cp in this directory ." << std::endl;
+                    return 0;
+                }
+            }
+            dir_entry FiletoCopy = getFileDirEntry(filename, subdircwd1);
+            std::string fileToCopyData = getFileData(FiletoCopy);
+            create(possibleName, fileToCopyData, subdircwd1, FiletoCopy.access_rights);
+        }
+        else
+        {
+            std::cout << "ERROR : Invalid path" << std::endl;
+        }
         return 0;
     }
 
     if (subdircwd2 != -1)
     {
-        // Då existerar directoryn, kontrollera nu bara att ingen fil vid samma namn finns där
+        // Då finns directoryn. Kontrollera att namnt ej finns där
+        if (checkFileName(subdircwd2, filename))
+        {
+            std::cout << "ERROR : A file with same name does already exist." << std::endl;
+            return 0;
+        }
         if (!checkCwdSpace(subdircwd2))
         {
             std::cout << "ERROR : Directory is FULL." << std::endl;
             return 0;
         }
-        if (checkFileName(subdircwd2, filename))
+
+        // Kolla nu access på dirren, behövs ej göras om subdircwd2 är root
+        if (subdircwd2 != 0)
         {
-            std::cout << "ERROR : FILE EXIST" << std::endl;
-        }
-        else
-        {
-            dir_entry FiletoCopy = getFileDirEntry(filename, subdircwd1);
-            std::string fileToCopyData = getFileData(FiletoCopy);
-            create(filename, fileToCopyData, subdircwd2);
-        }
-    }
-    else
-    {
-        // KUl scenario subdircwd2 finns inte, alltså pathen existera inte men.
-        // Det kan vara så att vi vill rename vår nuvarande fil.
-        // Kan vara så att pathname2 är tom, alltså att vi är i root, då måste vi göra något
-        std::vector<std::string> rename = pathname2;
-        rename.pop_back();
-        int checkIfRename = testAbsoluteFilepath(rename, TYPE_DIR);
-        if (checkIfRename == subdircwd1)
-        {
-            if (!checkCwdSpace(subdircwd1))
+            dir_entry currentCwd[BLOCK_SIZE / 64];
+            getCurrentWorkDirectoryEntries(currentCwd, subdircwd2);
+
+            dir_entry subDir = getFileDirEntry(pathname2.back(), currentCwd->first_blk);
+            std::string accessRights = getAccessRights(subDir);
+            std::cout << accessRights;
+            if (accessRights.find('w') == std::string::npos)
             {
-                std::cout << "ERROR : Directory is FULL." << std::endl;
+                std::cout << "ERROR : No permission to cp in this directory ." << std::endl;
                 return 0;
             }
-            dir_entry fileToCopy = getFileDirEntry(filename, subdircwd1);
-            std::string fileToCopyData = getFileData(fileToCopy);
-            create(temp2, fileToCopyData, subdircwd1);
         }
-        else
-        {
-            std::cout << "ERROR : Not a valid path" << std::endl;
-        }
+        // nu kopiera ditt, uppdatera dess dir entry
+        dir_entry FiletoCopy = getFileDirEntry(filename, subdircwd1);
+        std::string fileToCopyData = getFileData(FiletoCopy);
+        create(filename, fileToCopyData, subdircwd2, FiletoCopy.access_rights);
     }
+
     return 0;
 }
 
@@ -294,13 +365,14 @@ int FS::mv(std::string sourcepath, std::string destpath)
     std::vector<std::string> pathname1 = getAbsoluteFilepath(sourcepath);
     std::vector<std::string> pathname2 = getAbsoluteFilepath(destpath);
     std::string filename = pathname1.back();
-
+    // sourcepath
     int subdircwd1 = testAbsoluteFilepath(pathname1, TYPE_FILE);
     int subdircwd2;
     int subdircwd3;
+
     if (pathname2.empty())
     {
-        // root scenario
+        // root scenario, om användaren skriver / , . eller .. etc
         subdircwd2 = 0;
         subdircwd3 = -1;
     }
@@ -313,74 +385,101 @@ int FS::mv(std::string sourcepath, std::string destpath)
     // path 1 MÅSTEE! finnas då det är den fil vi ska behandla
     if (subdircwd1 == -1)
     {
-        std::cout << "ERROR : File does not exist" << std::endl;
+        std::cout << "ERROR : FILE DOES NOT EXIST" << std::endl;
+        return 0;
+    }
+    // Check file access, cannot mv file if it does not have write rights
+    dir_entry currentCwd[BLOCK_SIZE / 64];
+    if (subdircwd1 != 0)
+    {
+        getCurrentWorkDirectoryEntries(currentCwd, subdircwd1);
+    }
+    currentCwd->first_blk = subdircwd1;
+    dir_entry filedir = getFileDirEntry(filename, currentCwd->first_blk);
+    std::string accessRights = getAccessRights(filedir);
+    if (accessRights.find('w') == std::string::npos)
+    {
+        std::cout << "ERROR : No rights to move this file ." << std::endl;
         return 0;
     }
 
     if (subdircwd3 != -1)
     {
         // FILE EXIST, du kan inte move tille en fil (or rename)
-        std::cout << "ERROR : You cannot move to a existing file" << std::endl;
+        std::cout << "ERROR : You cannot mv into a file" << std::endl;
         return 0;
     }
-    if (subdircwd2 != -1)
+    if (subdircwd2 == -1)
     {
-        // Då existerar directoryn, kontrollera nu bara att ingen fil vid samma namn finns där
-        if (checkFileName(subdircwd2, filename))
+        // check if subdircwd actually is -1 and is not a rename case
+        std::string possibleName = pathname2.back();
+        pathname2.pop_back();
+        pathname1.pop_back();
+        // Now lets check if it actually is a -1
+        if (pathname1 == pathname2)
         {
-            std::cout << "ERROR : FILE EXIST" << std::endl;
-        }
-        else
-        {
-            if (!checkCwdSpace(subdircwd2))
+            // Means same directory basically
+            if (subdircwd1 != 0)
             {
-                std::cout << "ERROR : Directory is FULL." << std::endl;
-                return 0;
+                dir_entry currentCwd[BLOCK_SIZE / 64];
+                getCurrentWorkDirectoryEntries(currentCwd, subdircwd1);
+
+                dir_entry subDir = getFileDirEntry(pathname2.back(), currentCwd->first_blk);
+                std::string accessRights = getAccessRights(subDir);
+                if (accessRights.find('w') == std::string::npos)
+                {
+                    std::cout << "ERROR : No permission to cp in this directory ." << std::endl;
+                    return 0;
+                }
             }
             dir_entry currentFile = getFileDirEntry(filename, subdircwd1);
-
-            updateDiskDirEntry(currentFile, DELETE, subdircwd1);
-            updateDiskDirEntry(currentFile, CREATE, subdircwd2);
-        }
-        return 0;
-    }
-    else
-    {
-        // KUl scenario subdircwd2 finns inte, alltså pathen existera inte men.
-        // Det kan vara så att vi vill rename vår nuvarande fil.
-        // Kan vara så att pathname2 är tom, alltså att vi är i root, då måste vi göra något
-
-        if (subdircwd2 == 0)
-        {
-            if (!checkCwdSpace(subdircwd2))
-            {
-                std::cout << "ERROR : Directory is FULL." << std::endl;
-                return 0;
-            }
-            // Då vbet vi att de är root dvs de funkar att lägga in direkt
-            dir_entry currentFile = getFileDirEntry(filename, subdircwd1);
-            // NU ska vi uppdater dir_entryn i disken.
-            updateDiskDirEntry(currentFile, DELETE, subdircwd1);
-            updateDiskDirEntry(currentFile, CREATE, subdircwd2);
-            return 0;
-        }
-
-        std::vector<std::string> rename = pathname2;
-        rename.pop_back();
-        int checkIfRename = testAbsoluteFilepath(rename, TYPE_DIR);
-        if (checkIfRename == subdircwd1)
-        {
-            std::string newFileName = pathname2.back();
-            dir_entry currentFile = getFileDirEntry(filename, subdircwd1);
-            strcpy(currentFile.file_name, newFileName.c_str());
+            strcpy(currentFile.file_name, possibleName.c_str());
             // NU ska vi uppdater dir_entryn i disken.
             updateDiskDirEntry(currentFile, UPDATE, subdircwd1);
         }
         else
         {
-            std::cout << "ERROR : Not a valid path" << std::endl;
+            std::cout << "ERROR : Invalid path" << std::endl;
         }
+        return 0;
     }
+
+    if (subdircwd2 != -1)
+    {
+        // Då finns directoryn. Kontrollera att namnt ej finns där
+        if (checkFileName(subdircwd2, filename))
+        {
+            std::cout << "ERROR : A file with same name does already exist." << std::endl;
+            return 0;
+        }
+        if (!checkCwdSpace(subdircwd2))
+        {
+            std::cout << "ERROR : Directory is FULL." << std::endl;
+            return 0;
+        }
+
+        // Kolla nu access på dirren, behövs ej göras om subdircwd2 är root
+        if (subdircwd2 != 0)
+        {
+            dir_entry currentCwd[BLOCK_SIZE / 64];
+            getCurrentWorkDirectoryEntries(currentCwd, subdircwd2);
+
+            dir_entry subDir = getFileDirEntry(pathname2.back(), currentCwd->first_blk);
+            std::string accessRights = getAccessRights(subDir);
+            std::cout << accessRights;
+            if (accessRights.find('w') == std::string::npos)
+            {
+                std::cout << "ERROR : No permission to cp in this directory ." << std::endl;
+                return 0;
+            }
+        }
+        // nu kopiera ditt, uppdatera dess dir entry
+        dir_entry currentFile = getFileDirEntry(filename, subdircwd1);
+        // NU ska vi uppdater dir_entryn i disken.
+        updateDiskDirEntry(currentFile, DELETE, subdircwd1);
+        updateDiskDirEntry(currentFile, CREATE, subdircwd2);
+    }
+
     return 0;
 }
 
@@ -398,8 +497,37 @@ int FS::rm(std::string filepath)
 
     if (subDirCwd != -1)
     {
-        // DÅ ska vi remova filen filen!
-        dir_entry fileToDelete = getFileDirEntry(pathname.back(), subDirCwd);
+        std::string filename = pathname.back();
+        pathname.pop_back();
+        // DÅ ska vi remova filen filen!, kontrollera två saker, låter filen oss ta bort? och låter mappen oss tabort?
+        dir_entry currentCwd[BLOCK_SIZE / 64];
+        if (subDirCwd != 0)
+        {
+
+            getCurrentWorkDirectoryEntries(currentCwd, subDirCwd);
+
+            // Här kontrlerra vi att själva mappen som filen ligger i faktiskt får ändras
+            dir_entry filesDirectory[BLOCK_SIZE / 64];
+            getCurrentWorkDirectoryEntries(filesDirectory, currentCwd->first_blk);
+            // Mappens namn
+            dir_entry mapData = getFileDirEntry(pathname.back(), currentCwd->first_blk);
+            std::string accessRightsDir = getAccessRights(mapData);
+            if (accessRightsDir.find('w') == std::string::npos)
+            {
+                std::cout << "ERROR : No rights to remove this file because of directory rights." << std::endl;
+                return 0;
+            }
+        }
+        currentCwd->first_blk = subDirCwd;
+        dir_entry filedir = getFileDirEntry(filename, currentCwd->first_blk);
+        std::string accessRightsFile = getAccessRights(filedir);
+
+        if (accessRightsFile.find('w') == std::string::npos)
+        {
+            std::cout << "ERROR : No rights to remove this file ." << std::endl;
+            return 0;
+        }
+        dir_entry fileToDelete = getFileDirEntry(filename, subDirCwd);
         updateFat(fileToDelete, DELETE);
         updateDiskDirEntry(fileToDelete, DELETE, subDirCwd);
         return 0;
@@ -414,8 +542,14 @@ int FS::rm(std::string filepath)
         int parentcwd = cwd[0].first_blk;
 
         dir_entry fileToDelete = getFileDirEntry(pathname.back(), parentcwd);
+        std::string accessRightsDir = getAccessRights(fileToDelete);
 
-        if (checkEmptyDirectory(fileToDelete))
+        if (accessRightsDir.find('w') == std::string::npos)
+        {
+            std::cout << "ERROR : No rights to remove this file because of directory rights." << std::endl;
+            return 0;
+        }
+        else if (checkEmptyDirectory(fileToDelete))
         {
             updateFat(fileToDelete, DELETE);
             updateDiskDirEntry(fileToDelete, DELETE, parentcwd);
@@ -515,12 +649,12 @@ int FS::mkdir(std::string dirpath)
 
     if (subDirCwd != -1 || subdir2 == -1)
     {
-        std::cout << "ERROR" << std::endl;
+        std::cout << "ERROR : That directory does already exist." << std::endl;
         return 0;
     }
     if (subDir3 != -1)
     {
-        std::cout << "ERROR" << std::endl;
+        std::cout << "ERROR : File with that names does already exist." << std::endl;
         return 0;
     }
 
