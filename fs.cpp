@@ -18,8 +18,6 @@ FS::~FS()
 // formats the disk, i.e., creates an empty file system
 int FS::format()
 {
-    std::cout << "FS::format()\n";
-    // Skapar root entry i disken
     dir_entry currentDirectory[BLOCK_SIZE / sizeof(dir_entry)];
 
     // Init the blocks in fat
@@ -44,12 +42,9 @@ int FS::format()
 // written on the following rows (ended with an empty row)
 int FS::create(std::string filepath)
 {
-    std::cout << "FS::create(" << filepath << ")\n";
-
-    // Fil kontroll godkänn filen.
 
     std::vector<std::string> pathname = getAbsoluteFilepath(filepath);
-    if (pathname.empty() || filepath == "./")
+    if (pathname.empty())
     {
         std::cout << "ERROR : Not a valid name" << std::endl;
         return 0;
@@ -85,6 +80,12 @@ int FS::create(std::string filepath)
         return 0;
     }
 
+    if (!checkCwdSpace(subDirCwd))
+    {
+        std::cout << "ERROR : Directory is FULL." << std::endl;
+        return 0;
+    }
+
     std::string completeInput;
     std::string userInput;
     while (getline(std::cin, userInput))
@@ -106,9 +107,9 @@ int FS::create(std::string filepath)
     return 0;
 }
 
-int FS::create(std::string filepath, std::string input, int tempWorkDir)
+int FS::create(std::string filepath, std::string input, int tempWorkDir, uint8_t accessright)
 {
-    dir_entry newFile = initDirEntry(filepath, input.size(), TYPE_FILE);
+    dir_entry newFile = initDirEntry(filepath, input.size(), TYPE_FILE, accessright);
 
     diskWrite(newFile, input);
     updateFat(newFile, CREATE);
@@ -120,22 +121,34 @@ int FS::create(std::string filepath, std::string input, int tempWorkDir)
 // cat <filepath> reads the content of a file and prints it on the screen
 int FS::cat(std::string filepath)
 {
-    std::cout << "FS::cat(" << filepath << ")\n";
 
     std::vector<std::string> pathname = getAbsoluteFilepath(filepath);
     // check if dirpath actually exist
+    if (pathname.empty())
+    {
+        std::cout << "ERROR : You cannot read ROOT" << std::endl;
+        return 0;
+    }
     int subDirCwd = testAbsoluteFilepath(pathname, TYPE_FILE);
 
     if (subDirCwd != -1)
     {
         // DÅ ska vi läsa filen!
+
         dir_entry fileToRead = getFileDirEntry(pathname.back(), subDirCwd);
+        std::string accessRights = getAccessRights(fileToRead);
+
+        if (accessRights.find('r') == std::string::npos)
+        {
+            std::cout << "ERROR : No permission to do that." << std::endl;
+            return 0;
+        }
         std::string output = getFileData(fileToRead);
         std::cout << output << std::endl;
     }
     else
     {
-        std::cout << "ERROR" << std::endl;
+        std::cout << "ERROR : that file does not exist." << std::endl;
     }
 
     return 0;
@@ -144,13 +157,12 @@ int FS::cat(std::string filepath)
 // ls lists the content in the current directory (files and sub-directories)
 int FS::ls()
 {
-    std::cout << "FS::ls()\n";
-    // LÄs från nuvarande directory
     dir_entry currentCwd[BLOCK_SIZE / 64];
     getCurrentWorkDirectoryEntries(currentCwd, getWorkingDirectory());
 
     std::cout << "name\t";
     std::cout << "type\t";
+    std::cout << "accessrights\t";
     std::cout << "size" << std::endl;
 
     // nu har vi alla filler i denna, gå igenom dire och ta reda på vilka som existerar
@@ -162,6 +174,7 @@ int FS::ls()
         startIndex += 1;
     }
 
+    std::string accessrights = "---";
     for (int i = startIndex; i < BLOCK_SIZE / sizeof(dir_entry); i++)
     {
         if (currentCwd[i].first_blk != 65535)
@@ -178,7 +191,8 @@ int FS::ls()
             {
                 size = "-";
             }
-            std::cout << currentCwd[i].file_name << "\t" << type << "\t" << size << std::endl;
+            std::string accessrights = getAccessRights(currentCwd[i]);
+            std::cout << currentCwd[i].file_name << "\t" << type << "\t" << accessrights << "\t\t" << size << std::endl;
         }
     }
 
@@ -189,24 +203,33 @@ int FS::ls()
 // <sourcepath> to a new file <destpath>
 int FS::cp(std::string sourcepath, std::string destpath)
 {
-    std::cout << "FS::cp(" << sourcepath << "," << destpath << ")\n";
 
     std::vector<std::string> pathname1 = getAbsoluteFilepath(sourcepath);
     std::vector<std::string> pathname2 = getAbsoluteFilepath(destpath);
     std::string filename = pathname1.back();
-    std::string temp2 = pathname2.back();
+    std::string temp2;
 
     // sourcepath
     int subdircwd1 = testAbsoluteFilepath(pathname1, TYPE_FILE);
-    // destpath
-    int subdircwd2 = testAbsoluteFilepath(pathname2, TYPE_DIR);
-
-    int subdircwd3 = testAbsoluteFilepath(pathname2, TYPE_FILE);
+    int subdircwd2;
+    int subdircwd3;
+    if (pathname2.empty())
+    {
+        // root scenario
+        subdircwd2 = 0;
+        subdircwd3 = -1;
+    }
+    else
+    {
+        subdircwd2 = testAbsoluteFilepath(pathname2, TYPE_DIR);
+        subdircwd3 = testAbsoluteFilepath(pathname2, TYPE_FILE);
+        temp2 = pathname2.back();
+    }
 
     // path 1 MÅSTEE! finnas då det är den fil vi ska behandla
     if (subdircwd1 == -1)
     {
-        std::cout << "ERROR" << std::endl;
+        std::cout << "ERROR : FILE DOES NO EXIST" << std::endl;
         return 0;
     }
 
@@ -220,6 +243,11 @@ int FS::cp(std::string sourcepath, std::string destpath)
     if (subdircwd2 != -1)
     {
         // Då existerar directoryn, kontrollera nu bara att ingen fil vid samma namn finns där
+        if (!checkCwdSpace(subdircwd2))
+        {
+            std::cout << "ERROR : Directory is FULL." << std::endl;
+            return 0;
+        }
         if (checkFileName(subdircwd2, filename))
         {
             std::cout << "ERROR : FILE EXIST" << std::endl;
@@ -241,6 +269,11 @@ int FS::cp(std::string sourcepath, std::string destpath)
         int checkIfRename = testAbsoluteFilepath(rename, TYPE_DIR);
         if (checkIfRename == subdircwd1)
         {
+            if (!checkCwdSpace(subdircwd1))
+            {
+                std::cout << "ERROR : Directory is FULL." << std::endl;
+                return 0;
+            }
             dir_entry fileToCopy = getFileDirEntry(filename, subdircwd1);
             std::string fileToCopyData = getFileData(fileToCopy);
             create(temp2, fileToCopyData, subdircwd1);
@@ -257,23 +290,30 @@ int FS::cp(std::string sourcepath, std::string destpath)
 // or moves the file <sourcepath> to the directory <destpath> (if dest is a directory)
 int FS::mv(std::string sourcepath, std::string destpath)
 {
-    std::cout << "FS::mv(" << sourcepath << "," << destpath << ")\n";
 
     std::vector<std::string> pathname1 = getAbsoluteFilepath(sourcepath);
     std::vector<std::string> pathname2 = getAbsoluteFilepath(destpath);
     std::string filename = pathname1.back();
 
-    // sourcepath
     int subdircwd1 = testAbsoluteFilepath(pathname1, TYPE_FILE);
-    // destpath
-    int subdircwd2 = testAbsoluteFilepath(pathname2, TYPE_DIR);
-
-    int subdircwd3 = testAbsoluteFilepath(pathname2, TYPE_FILE);
+    int subdircwd2;
+    int subdircwd3;
+    if (pathname2.empty())
+    {
+        // root scenario
+        subdircwd2 = 0;
+        subdircwd3 = -1;
+    }
+    else
+    {
+        subdircwd2 = testAbsoluteFilepath(pathname2, TYPE_DIR);
+        subdircwd3 = testAbsoluteFilepath(pathname2, TYPE_FILE);
+    }
 
     // path 1 MÅSTEE! finnas då det är den fil vi ska behandla
     if (subdircwd1 == -1)
     {
-        std::cout << "ERROR" << std::endl;
+        std::cout << "ERROR : File does not exist" << std::endl;
         return 0;
     }
 
@@ -292,6 +332,11 @@ int FS::mv(std::string sourcepath, std::string destpath)
         }
         else
         {
+            if (!checkCwdSpace(subdircwd2))
+            {
+                std::cout << "ERROR : Directory is FULL." << std::endl;
+                return 0;
+            }
             dir_entry currentFile = getFileDirEntry(filename, subdircwd1);
 
             updateDiskDirEntry(currentFile, DELETE, subdircwd1);
@@ -304,6 +349,22 @@ int FS::mv(std::string sourcepath, std::string destpath)
         // KUl scenario subdircwd2 finns inte, alltså pathen existera inte men.
         // Det kan vara så att vi vill rename vår nuvarande fil.
         // Kan vara så att pathname2 är tom, alltså att vi är i root, då måste vi göra något
+
+        if (subdircwd2 == 0)
+        {
+            if (!checkCwdSpace(subdircwd2))
+            {
+                std::cout << "ERROR : Directory is FULL." << std::endl;
+                return 0;
+            }
+            // Då vbet vi att de är root dvs de funkar att lägga in direkt
+            dir_entry currentFile = getFileDirEntry(filename, subdircwd1);
+            // NU ska vi uppdater dir_entryn i disken.
+            updateDiskDirEntry(currentFile, DELETE, subdircwd1);
+            updateDiskDirEntry(currentFile, CREATE, subdircwd2);
+            return 0;
+        }
+
         std::vector<std::string> rename = pathname2;
         rename.pop_back();
         int checkIfRename = testAbsoluteFilepath(rename, TYPE_DIR);
@@ -326,10 +387,13 @@ int FS::mv(std::string sourcepath, std::string destpath)
 // rm <filepath> removes / deletes the file <filepath>
 int FS::rm(std::string filepath)
 {
-    std::cout << "FS::rm(" << filepath << ")\n";
 
     std::vector<std::string> pathname = getAbsoluteFilepath(filepath);
-    // check if dirpath actually exist
+    if (pathname.empty() || filepath == "." || filepath == "./")
+    {
+        std::cout << "ERROR : Cannot remove ROOT. Canceling file deleting ..." << std::endl;
+        return 0;
+    }
     int subDirCwd = testAbsoluteFilepath(pathname, TYPE_FILE);
 
     if (subDirCwd != -1)
@@ -373,10 +437,16 @@ int FS::rm(std::string filepath)
 // the end of file <filepath2>. The file <filepath1> is unchanged.
 int FS::append(std::string filepath1, std::string filepath2)
 {
-    std::cout << "FS::append(" << filepath1 << "," << filepath2 << ")\n";
 
     std::vector<std::string> pathname1 = getAbsoluteFilepath(filepath1);
     std::vector<std::string> pathname2 = getAbsoluteFilepath(filepath2);
+
+    if (pathname1.empty() || pathname2.empty())
+    {
+        std::cout << "ERROR : You cannot append root" << std::endl;
+        return 0;
+    }
+
     int subdircwd1 = testAbsoluteFilepath(pathname1, TYPE_FILE);
     int subdircwd2 = testAbsoluteFilepath(pathname2, TYPE_FILE);
 
@@ -390,15 +460,26 @@ int FS::append(std::string filepath1, std::string filepath2)
         std::cout << "ERROR" << std::endl;
         return 0;
     }
-
     // check if dirpath actually exist
 
     // Get file 1 dir contents
     dir_entry file1 = getFileDirEntry(pathname1.back(), subdircwd1);
-    // Then file 1 contents
-    std::string file1Data = getFileData(file1);
+
     // Get file 2 dir contents
     dir_entry file2 = getFileDirEntry(pathname2.back(), subdircwd2);
+
+    // rights check
+    std::string accessRight1 = getAccessRights(file1);
+    std::string accessRight2 = getAccessRights(file2);
+
+    if (accessRight1.find('r') == std::string::npos || accessRight2.find('w') == std::string::npos)
+    {
+        std::cout << "ERROR : No permission to do that." << std::endl;
+        return 0;
+    }
+
+    // Then file 1 contents
+    std::string file1Data = getFileData(file1);
     // Then file 2 contents
     std::string file2Data = getFileData(file2);
     // Complete data string
@@ -407,7 +488,7 @@ int FS::append(std::string filepath1, std::string filepath2)
     // Now we shall store the new data to file2 and change fat and diskDirEntry.
     // Smart lösning är att ta bort file2 temporärt för att sedan skappa den på nytt med nya contentes
     rm(filepath2);
-    create(file2.file_name, completFileData, subdircwd2);
+    create(file2.file_name, completFileData, subdircwd2, file2.access_rights);
 
     return 0;
 }
@@ -416,7 +497,6 @@ int FS::append(std::string filepath1, std::string filepath2)
 // in the current directory
 int FS::mkdir(std::string dirpath)
 {
-    std::cout << "FS::mkdir(" << dirpath << ")\n";
 
     std::vector<std::string> pathname = getAbsoluteFilepath(dirpath);
 
@@ -461,6 +541,12 @@ int FS::mkdir(std::string dirpath)
         return 0;
     }
 
+    if (!checkCwdSpace(subdir2))
+    {
+        std::cout << "ERROR : Directory is FULL." << std::endl;
+        return 0;
+    }
+
     // Skapar en Directory entry för filen.
     dir_entry newDirEntry = initDirEntry(dirname, 0, TYPE_DIR);
     // Skapar faktiskta innehåller newDirEntry har
@@ -483,8 +569,6 @@ int FS::mkdir(std::string dirpath)
 // cd <dirpath> changes the current (working) directory to the directory named <dirpath>
 int FS::cd(std::string dirpath)
 {
-    std::cout << "FS::cd(" << dirpath << ")\n";
-
     // Get dirPath contents
     std::vector<std::string> pathname = getAbsoluteFilepath(dirpath);
     // check if dirpath actually exist
@@ -496,7 +580,7 @@ int FS::cd(std::string dirpath)
     }
     else
     {
-        std::cout << "ERROR" << std::endl;
+        std::cout << "ERROR : That directory does not exist" << std::endl;
     }
 
     return 0;
@@ -506,7 +590,6 @@ int FS::cd(std::string dirpath)
 // directory, including the currect directory name
 int FS::pwd()
 {
-    std::cout << "FS::pwd()\n";
 
     std::string output = getPwd();
 
@@ -519,20 +602,56 @@ int FS::pwd()
 // file <filepath> to <accessrights>.
 int FS::chmod(std::string accessrights, std::string filepath)
 {
-    std::cout << "FS::chmod(" << accessrights << "," << filepath << ")\n";
+    std::vector<std::string> pathname = getAbsoluteFilepath(filepath);
+    if (pathname.empty())
+    {
+        std::cout << "ERROR: Cannot change ROOT accessrights." << std::endl;
+        return 0;
+    }
+    int subDirCwd1 = testAbsoluteFilepath(pathname, TYPE_DIR);
+    int subDirCwd2 = testAbsoluteFilepath(pathname, TYPE_FILE);
+
+    if (stoi(accessrights) > 7 || stoi(accessrights) < 0)
+    {
+        std::cout << "ERROR: That access does not exist" << std::endl;
+        return 0;
+    }
+
+    // FILE
+    if (subDirCwd2 != -1)
+    {
+        std::string name = pathname.back();
+        dir_entry file = getFileDirEntry(name, subDirCwd2);
+        setAccessRights(&file, stoi(accessrights));
+        updateDiskDirEntry(file, UPDATE, subDirCwd2);
+        return 0;
+    }
+    // DIR
+    if (subDirCwd1 != -1)
+    {
+        dir_entry currentCwd[BLOCK_SIZE / 64];
+        getCurrentWorkDirectoryEntries(currentCwd, subDirCwd1);
+        std::string name = pathname.back();
+        dir_entry file = getFileDirEntry(name, currentCwd[0].first_blk);
+        setAccessRights(&file, stoi(accessrights));
+        updateDiskDirEntry(file, UPDATE, currentCwd[0].first_blk);
+        return 0;
+    }
+    std::cout << "ERROR : That file/dir does not exist." << std::endl;
+
     return 0;
 }
 
 // Own written code
 // Skapar en dir_entry, möjligen ska denna ändras för att ha koll på subdirectroies och vart filler befinner sig etc
-dir_entry FS::initDirEntry(std::string name, uint32_t sizeOfFile, uint8_t fileType)
+dir_entry FS::initDirEntry(std::string name, uint32_t sizeOfFile, uint8_t fileType, uint8_t accessright)
 {
     dir_entry currentDir;
     strcpy(currentDir.file_name, name.c_str());
     currentDir.size = sizeOfFile;
     currentDir.first_blk = getFirstFreeFatBlock(fat);
     currentDir.type = fileType;
-    currentDir.access_rights = READ | WRITE;
+    currentDir.access_rights = accessright;
 
     return currentDir;
 }
@@ -729,6 +848,50 @@ std::vector<std::string> FS::getAbsoluteFilepath(std::string filepath)
     return filepath_content;
 }
 
+std::string FS::getAccessRights(dir_entry file)
+{
+    // read (0x04), write (0x02), execute (0x01)
+    std::string accessRights = "---";
+    uint8_t access_rights = file.access_rights;
+
+    if (access_rights == READ)
+        accessRights = "r--";
+    else if (access_rights == WRITE)
+        accessRights = "-w-";
+    else if (access_rights == EXECUTE)
+        accessRights = "--x";
+    else if (access_rights == 0x06)
+        accessRights = "rw-";
+    else if (access_rights == 0x05)
+        accessRights = "r-x";
+    else if (access_rights == 0x03)
+        accessRights = "-wx";
+    else if (access_rights == 0x07)
+        accessRights = "rwx";
+
+    return accessRights;
+}
+
+void FS::setAccessRights(dir_entry *file, int accessRights)
+{
+    // read (0x04), write (0x02), execute (0x01)
+
+    if (1 == accessRights)
+        file->access_rights = EXECUTE;
+    else if (2 == accessRights)
+        file->access_rights = WRITE;
+    else if (3 == accessRights)
+        file->access_rights = WRITE | EXECUTE;
+    else if (4 == accessRights)
+        file->access_rights = READ;
+    else if (5 == accessRights)
+        file->access_rights = READ | EXECUTE;
+    else if (6 == accessRights)
+        file->access_rights = READ | WRITE;
+    else if (7 == accessRights)
+        file->access_rights = READ | WRITE | EXECUTE;
+}
+
 int FS::testAbsoluteFilepath(std::vector<std::string> filepathcontents, bool type)
 {
     // Bara cd tänkt
@@ -846,12 +1009,12 @@ std::string FS::getPwd()
     return pwd;
 }
 
-bool FS::checkCwdSpace()
+bool FS::checkCwdSpace(int cwd)
 {
     bool cwdSpace = false;
 
     dir_entry currentCwd[BLOCK_SIZE / 64];
-    getCurrentWorkDirectoryEntries(currentCwd, getWorkingDirectory());
+    getCurrentWorkDirectoryEntries(currentCwd, cwd);
 
     for (int i = 1; i < BLOCK_SIZE / 64; i++)
     {

@@ -48,7 +48,7 @@ private:
     void setTempCwd(int newTmp) { tempCwd = newTmp; }
     int getTempCwd() { return tempCwd; }
 
-    dir_entry initDirEntry(std::string name, uint32_t sizeOfFile, uint8_t fileType);
+    dir_entry initDirEntry(std::string name, uint32_t sizeOfFile, uint8_t fileType, uint8_t accessright = 0x06);
     // Setters
     // Getters, användbara funktioner. Kommer användas i många olika
     // Returnerar given mängd block en size ska delas in i
@@ -66,14 +66,15 @@ private:
     void getCurrentWorkDirectoryEntries(dir_entry *currentWorkDir, int workdirectory);
     // Returnerar en fils dir_entry
     dir_entry getFileDirEntry(std::string fileName, int cwd);
+    void setAccessRights(dir_entry *file, int accessRights);
+    std::string getAccessRights(dir_entry file);
     // Returnar en vektor med all data i pathen.
     std::vector<std::string> getAbsoluteFilepath(std::string filepath);
     // Retunerar den work directory som kommer vara intressant, om -1 funkar de inte helt enkelt
     int testAbsoluteFilepath(std::vector<std::string> filepathcontents, bool type);
 
     // Returnerar en string av nuvarande pwd
-    std::string
-    getPwd();
+    std::string getPwd();
     // Skriver til disken
     void diskWrite(dir_entry currentFile, std::string data);
     // Updaterar fat, används när vi skrivit något till disken , eller raderat, beror på!
@@ -85,7 +86,7 @@ private:
     // Kontrollerar om en given directory är tom eller ej
     bool checkEmptyDirectory(dir_entry dirname);
     // Kontrollerar om det finns utrymme för fil i nuvarande workingdirectory.
-    bool checkCwdSpace();
+    bool checkCwdSpace(int cwd);
 
 public:
     FS();
@@ -95,7 +96,7 @@ public:
     // create <filepath> creates a new file on the disk, the data content is
     // written on the following rows (ended with an empty row)
     int create(std::string filepath);
-    int create(std::string filepath, std::string input, int tempWorkDir);
+    int create(std::string filepath, std::string input, int tempWorkDir, uint8_t accessright = 0x06);
     // cat <filepath> reads the content of a file and prints it on the screen
     int cat(std::string filepath);
     // ls lists the content in the current directory (files and sub-directories)
