@@ -40,13 +40,10 @@ private:
     // size of a FAT entry is 2 bytes
     int16_t fat[BLOCK_SIZE / 2];
     int workingDirectory;
-    int tempCwd;
 
     // Viktiga
     void setWorkingDirectory(int newWorkingDirectory) { workingDirectory = newWorkingDirectory; }
     int getWorkingDirectory() { return workingDirectory; }
-    void setTempCwd(int newTmp) { tempCwd = newTmp; }
-    int getTempCwd() { return tempCwd; }
 
     dir_entry initDirEntry(std::string name, uint32_t sizeOfFile, uint8_t fileType, uint8_t accessright = 0x06);
     // Setters
