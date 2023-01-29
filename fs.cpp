@@ -1149,8 +1149,7 @@ bool FS::checkCwdSpace(int cwd)
 
     dir_entry currentCwd[BLOCK_SIZE / 64];
     getCurrentWorkDirectoryEntries(currentCwd, cwd);
-
-    for (int i = 1; i < BLOCK_SIZE / 64; i++)
+    for (int i = 0; i < BLOCK_SIZE / 64; i++)
     {
         // 65535 är högsta value i unit16_t. Alla first.blk har blivit de som default
         //  Är firsdt_blk === 65535 vet vi att vi kan använda det då inget block i fat har index 65535.
