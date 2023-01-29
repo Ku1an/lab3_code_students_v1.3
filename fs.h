@@ -2,6 +2,7 @@
 #include <cstdint>
 #include "disk.h"
 #include <vector>
+#include <regex>
 #include <string.h>
 #include <sstream>
 
@@ -64,11 +65,11 @@ private:
     // Sätter given array av dir_entrys till data som består av de nuvarande.
     void getCurrentWorkDirectoryEntries(dir_entry *currentWorkDir, int workdirectory);
     // Returnerar en fils dir_entry
-    dir_entry getFileDirEntry(std::string fileName);
+    dir_entry getFileDirEntry(std::string fileName, int cwd);
     // Returnar en vektor med all data i pathen.
     std::vector<std::string> getAbsoluteFilepath(std::string filepath);
     // Retunerar den work directory som kommer vara intressant, om -1 funkar de inte helt enkelt
-    int testAbsoluteFilepath(std::vector<std::string> filepathcontents);
+    int testAbsoluteFilepath(std::vector<std::string> filepathcontents, bool type);
 
     // Returnerar en string av nuvarande pwd
     std::string

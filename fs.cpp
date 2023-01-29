@@ -47,25 +47,44 @@ int FS::create(std::string filepath)
     std::cout << "FS::create(" << filepath << ")\n";
 
     // Fil kontroll godkänn filen.
-    if (filepath.size() >= 56)
+
+    std::vector<std::string> pathname = getAbsoluteFilepath(filepath);
+    if (pathname.empty() || filepath == "./")
     {
-        std::cout << "ERROR : Filename to large. Canceling file creation ..." << std::endl;
+        std::cout << "ERROR : Not a valid name" << std::endl;
         return 0;
     }
-    if (checkFileName(getWorkingDirectory(), filepath))
+    std::string filename = pathname.back();
+
+    std::regex regex_filename("^[\\w\\-. ]+$");
+    if (!std::regex_match(filename, regex_filename))
     {
-        std::cout << "ERROR : A file/dir with that name does already exist. Canceling file creation ..." << std::endl;
+        std::cout << "ERROR : Filename must only contain [a-z] [A-Z] [0-9] . _ -" << std::endl;
+        return 0;
+    }
+    // max filename size: 55 characters
+    if (filename.size() >= 56)
+    {
+        std::cout << "ERROR : Filename must not exceed 55 characters" << std::endl;
         return 0;
     }
 
-    if (!checkCwdSpace())
+    // check if dirpath actually exist
+    int subDirCwd = testAbsoluteFilepath(pathname, TYPE_FILE);
+    if (subDirCwd != -1)
     {
-        std::cout << "ERROR : No place in current directory. Canceling file creation ..." << std::endl;
+        std::cout << "ERROR" << std::endl;
         return 0;
     }
 
-    // Kontrollera om de finns space i nuvarnde dir
-    // Läsa input från användaren.
+    pathname.pop_back();
+    subDirCwd = testAbsoluteFilepath(pathname, TYPE_DIR);
+    if (subDirCwd == -1)
+    {
+        std::cout << "ERROR" << std::endl;
+        return 0;
+    }
+
     std::string completeInput;
     std::string userInput;
     while (getline(std::cin, userInput))
@@ -77,12 +96,12 @@ int FS::create(std::string filepath)
         completeInput += userInput + "\n";
     }
     // Skapar en Directory entry för filen.
-    dir_entry newFile = initDirEntry(filepath, completeInput.size(), TYPE_FILE);
+    dir_entry newFile = initDirEntry(filename, completeInput.size(), TYPE_FILE);
 
     // updateFat, uppdaterar enbart fat, om vart filen ska vara osv.
     diskWrite(newFile, completeInput);
     updateFat(newFile, CREATE);
-    updateDiskDirEntry(newFile, CREATE, getWorkingDirectory());
+    updateDiskDirEntry(newFile, CREATE, subDirCwd);
 
     return 0;
 }
@@ -103,23 +122,22 @@ int FS::cat(std::string filepath)
 {
     std::cout << "FS::cat(" << filepath << ")\n";
 
-    // kolla först namnet
-    if (filepath.size() >= 56 || !checkFileName(getWorkingDirectory(), filepath))
+    std::vector<std::string> pathname = getAbsoluteFilepath(filepath);
+    // check if dirpath actually exist
+    int subDirCwd = testAbsoluteFilepath(pathname, TYPE_FILE);
+
+    if (subDirCwd != -1)
     {
-        std::cout << "ERROR : File does not exist. Canceling cat file ..." << std::endl;
-        return 0;
+        // DÅ ska vi läsa filen!
+        dir_entry fileToRead = getFileDirEntry(pathname.back(), subDirCwd);
+        std::string output = getFileData(fileToRead);
+        std::cout << output << std::endl;
+    }
+    else
+    {
+        std::cout << "ERROR" << std::endl;
     }
 
-    // Först få filens dir_entry
-    dir_entry currentfile = getFileDirEntry(filepath);
-
-    if (currentfile.type == TYPE_DIR)
-    {
-        std::cout << "ERROR : You cannot read a directory. Canceling cat file ..." << std::endl;
-        return 0;
-    }
-    std::string output = getFileData(currentfile);
-    std::cout << output << std::endl;
     return 0;
 }
 
@@ -173,67 +191,65 @@ int FS::cp(std::string sourcepath, std::string destpath)
 {
     std::cout << "FS::cp(" << sourcepath << "," << destpath << ")\n";
 
-    if (destpath.size() >= 56)
+    std::vector<std::string> pathname1 = getAbsoluteFilepath(sourcepath);
+    std::vector<std::string> pathname2 = getAbsoluteFilepath(destpath);
+    std::string filename = pathname1.back();
+    std::string temp2 = pathname2.back();
+
+    // sourcepath
+    int subdircwd1 = testAbsoluteFilepath(pathname1, TYPE_FILE);
+    // destpath
+    int subdircwd2 = testAbsoluteFilepath(pathname2, TYPE_DIR);
+
+    int subdircwd3 = testAbsoluteFilepath(pathname2, TYPE_FILE);
+
+    // path 1 MÅSTEE! finnas då det är den fil vi ska behandla
+    if (subdircwd1 == -1)
     {
-        std::cout << "ERROR : Filename to large. Canceling copy operation ..." << std::endl;
+        std::cout << "ERROR" << std::endl;
         return 0;
     }
 
-    // Checkar att sourcepath faktiskt finns
-    if (!checkFileName(getWorkingDirectory(), sourcepath))
+    if (subdircwd3 != -1)
     {
-        std::cout << "ERROR : You cannot copy contents of a file that does not exist. Canceling copy operation ..." << std::endl;
+        // FILE EXIST, du kan inte move tille en fil (or rename)
+        std::cout << "ERROR : You cannot cp to a filename that already exist" << std::endl;
         return 0;
     }
-    // Checkar att destpath faktiskt inte finns
-    if (checkFileName(getWorkingDirectory(), destpath))
-    {
 
-        dir_entry destPath = getFileDirEntry(destpath);
-        // Kontrollera om destpath är fil eller dir
-        if (destPath.type == TYPE_FILE)
+    if (subdircwd2 != -1)
+    {
+        // Då existerar directoryn, kontrollera nu bara att ingen fil vid samma namn finns där
+        if (checkFileName(subdircwd2, filename))
         {
-            // Om det är en existerande fil gör vi inget o returnerar en error
-            std::cout << "ERROR : You cannot create a file with the same name as another. Canceling copy operation ..." << std::endl;
-            return 0;
+            std::cout << "ERROR : FILE EXIST" << std::endl;
         }
         else
         {
-            // Vi vet att de är en dir
-            dir_entry fileToCopy = getFileDirEntry(sourcepath);
-            std::string fileData = getFileData(fileToCopy);
-            if (!checkFileName(destPath.first_blk, fileToCopy.file_name))
-            {
-                if (checkCwdSpace())
-                {
-                    create(sourcepath, fileData, destPath.first_blk);
-                }
-                else
-                {
-                    std::cout << "ERROR : No place in that directory. Canceling copy operation ..." << std::endl;
-                }
-            }
-            else
-            {
-                std::cout << "ERROR : A file with that name does already exist. Canceling copy operation ..." << std::endl;
-            }
-            return 0;
+            dir_entry FiletoCopy = getFileDirEntry(filename, subdircwd1);
+            std::string fileToCopyData = getFileData(FiletoCopy);
+            create(filename, fileToCopyData, subdircwd2);
         }
     }
-
-    if (!checkCwdSpace())
+    else
     {
-        std::cout << "ERROR : No place in current directory. Canceling copy operation ..." << std::endl;
-        return 0;
+        // KUl scenario subdircwd2 finns inte, alltså pathen existera inte men.
+        // Det kan vara så att vi vill rename vår nuvarande fil.
+        // Kan vara så att pathname2 är tom, alltså att vi är i root, då måste vi göra något
+        std::vector<std::string> rename = pathname2;
+        rename.pop_back();
+        int checkIfRename = testAbsoluteFilepath(rename, TYPE_DIR);
+        if (checkIfRename == subdircwd1)
+        {
+            dir_entry fileToCopy = getFileDirEntry(filename, subdircwd1);
+            std::string fileToCopyData = getFileData(fileToCopy);
+            create(temp2, fileToCopyData, subdircwd1);
+        }
+        else
+        {
+            std::cout << "ERROR : Not a valid path" << std::endl;
+        }
     }
-
-    // Läs datan från filen alltså sourcepath
-    // Hämtar data om nuvarande directory
-    dir_entry fileToCopy = getFileDirEntry(sourcepath);
-    std::string fileData = getFileData(fileToCopy);
-
-    create(destpath, fileData, getWorkingDirectory());
-
     return 0;
 }
 
@@ -243,71 +259,67 @@ int FS::mv(std::string sourcepath, std::string destpath)
 {
     std::cout << "FS::mv(" << sourcepath << "," << destpath << ")\n";
 
-    // Error checks
+    std::vector<std::string> pathname1 = getAbsoluteFilepath(sourcepath);
+    std::vector<std::string> pathname2 = getAbsoluteFilepath(destpath);
+    std::string filename = pathname1.back();
 
-    if (destpath.size() >= 56)
+    // sourcepath
+    int subdircwd1 = testAbsoluteFilepath(pathname1, TYPE_FILE);
+    // destpath
+    int subdircwd2 = testAbsoluteFilepath(pathname2, TYPE_DIR);
+
+    int subdircwd3 = testAbsoluteFilepath(pathname2, TYPE_FILE);
+
+    // path 1 MÅSTEE! finnas då det är den fil vi ska behandla
+    if (subdircwd1 == -1)
     {
-        std::cout << "ERROR : New filename to large. Canceling rename operation ..." << std::endl;
+        std::cout << "ERROR" << std::endl;
         return 0;
     }
 
-    // Checkar att sourcepath faktiskt finns
-    if (!checkFileName(getWorkingDirectory(), sourcepath))
+    if (subdircwd3 != -1)
     {
-        std::cout << "ERROR : You cannot rename a file that does not exist. Canceling rename operation ..." << std::endl;
+        // FILE EXIST, du kan inte move tille en fil (or rename)
+        std::cout << "ERROR : You cannot move to a existing file" << std::endl;
         return 0;
     }
-
-    // Checkar att destpath
-    dir_entry destPath = getFileDirEntry(destpath);
-
-    if (checkFileName(getWorkingDirectory(), destpath) && destPath.type != TYPE_DIR)
+    if (subdircwd2 != -1)
     {
-        // Kontrollera om destpath existerar och att de är en fil
-
-        std::cout << "ERROR : You cannot rename a file with the same name as another. Canceling rename operation ..." << std::endl;
-        return 0;
-    }
-
-    // Kan vara dir, kan vara file, vet ej än
-    int currentCwd = getWorkingDirectory();
-
-    if (destPath.type == TYPE_DIR)
-    {
-        dir_entry currentFile = getFileDirEntry(sourcepath);
-        std::string fileData = getFileData(currentFile);
-        // Sätt temp working dir
-        setTempCwd(destPath.first_blk);
-        int tempCwd = getTempCwd();
-
-        if (!checkFileName(tempCwd, currentFile.file_name))
+        // Då existerar directoryn, kontrollera nu bara att ingen fil vid samma namn finns där
+        if (checkFileName(subdircwd2, filename))
         {
-
-            // Critical section, funktionerna bygger på cwd
-            if (checkCwdSpace())
-            {
-                updateDiskDirEntry(currentFile, DELETE, currentCwd);
-                updateDiskDirEntry(currentFile, CREATE, tempCwd);
-            }
-            else
-            {
-                std::cout << "ERROR : That sub-dir is full. Canceling move operation ..." << std::endl;
-            }
+            std::cout << "ERROR : FILE EXIST" << std::endl;
         }
         else
         {
-            std::cout << "ERROR : A file with that name does already exist in that directory. Canceling move operation ..." << std::endl;
+            dir_entry currentFile = getFileDirEntry(filename, subdircwd1);
+
+            updateDiskDirEntry(currentFile, DELETE, subdircwd1);
+            updateDiskDirEntry(currentFile, CREATE, subdircwd2);
         }
+        return 0;
     }
     else
     {
-        // Renamar fillen bara
-        dir_entry currentFile = getFileDirEntry(sourcepath);
-        strcpy(currentFile.file_name, destpath.c_str());
-        // NU ska vi uppdater dir_entryn i disken.
-        updateDiskDirEntry(currentFile, UPDATE, currentCwd);
+        // KUl scenario subdircwd2 finns inte, alltså pathen existera inte men.
+        // Det kan vara så att vi vill rename vår nuvarande fil.
+        // Kan vara så att pathname2 är tom, alltså att vi är i root, då måste vi göra något
+        std::vector<std::string> rename = pathname2;
+        rename.pop_back();
+        int checkIfRename = testAbsoluteFilepath(rename, TYPE_DIR);
+        if (checkIfRename == subdircwd1)
+        {
+            std::string newFileName = pathname2.back();
+            dir_entry currentFile = getFileDirEntry(filename, subdircwd1);
+            strcpy(currentFile.file_name, newFileName.c_str());
+            // NU ska vi uppdater dir_entryn i disken.
+            updateDiskDirEntry(currentFile, UPDATE, subdircwd1);
+        }
+        else
+        {
+            std::cout << "ERROR : Not a valid path" << std::endl;
+        }
     }
-
     return 0;
 }
 
@@ -316,35 +328,42 @@ int FS::rm(std::string filepath)
 {
     std::cout << "FS::rm(" << filepath << ")\n";
 
-    // Först error checks
-    if (!checkFileName(getWorkingDirectory(), filepath))
+    std::vector<std::string> pathname = getAbsoluteFilepath(filepath);
+    // check if dirpath actually exist
+    int subDirCwd = testAbsoluteFilepath(pathname, TYPE_FILE);
+
+    if (subDirCwd != -1)
     {
-        std::cout << "ERROR : A file with that name does not exist. Canceling file deleting ..." << std::endl;
+        // DÅ ska vi remova filen filen!
+        dir_entry fileToDelete = getFileDirEntry(pathname.back(), subDirCwd);
+        updateFat(fileToDelete, DELETE);
+        updateDiskDirEntry(fileToDelete, DELETE, subDirCwd);
         return 0;
     }
 
-    // Vi har alltså fått en fil som ska bortas, vad ska ändras?
-    // FAT måste uppdateras och Nuvarande dir måste uppdateras
-    int cwd = getWorkingDirectory();
+    subDirCwd = testAbsoluteFilepath(pathname, TYPE_DIR);
+    if (subDirCwd != -1)
+    {
 
-    dir_entry fileToDelete = getFileDirEntry(filepath);
-    if (fileToDelete.type == TYPE_FILE)
-    {
-        updateFat(fileToDelete, DELETE);
-        updateDiskDirEntry(fileToDelete, DELETE, cwd);
-    }
-    else
-    {
-        // Kontrollera om directoryn är tom
+        dir_entry cwd[BLOCK_SIZE / sizeof(dir_entry)];
+        getCurrentWorkDirectoryEntries(cwd, subDirCwd);
+        int parentcwd = cwd[0].first_blk;
+
+        dir_entry fileToDelete = getFileDirEntry(pathname.back(), parentcwd);
+
         if (checkEmptyDirectory(fileToDelete))
         {
             updateFat(fileToDelete, DELETE);
-            updateDiskDirEntry(fileToDelete, DELETE, cwd);
+            updateDiskDirEntry(fileToDelete, DELETE, parentcwd);
         }
         else
         {
             std::cout << "ERROR : Directory is not empty. Canceling file deleting ..." << std::endl;
         }
+    }
+    else
+    {
+        std::cout << "ERROR : File or Dir does not exist. " << std::endl;
     }
 
     return 0;
@@ -355,27 +374,31 @@ int FS::rm(std::string filepath)
 int FS::append(std::string filepath1, std::string filepath2)
 {
     std::cout << "FS::append(" << filepath1 << "," << filepath2 << ")\n";
-    // Error checks
 
-    // Checkar att filepath1 faktiskt finns
-    if (!checkFileName(getWorkingDirectory(), filepath1))
+    std::vector<std::string> pathname1 = getAbsoluteFilepath(filepath1);
+    std::vector<std::string> pathname2 = getAbsoluteFilepath(filepath2);
+    int subdircwd1 = testAbsoluteFilepath(pathname1, TYPE_FILE);
+    int subdircwd2 = testAbsoluteFilepath(pathname2, TYPE_FILE);
+
+    if (subdircwd1 == -1)
     {
-        std::cout << "ERROR : You cannot append from a file that does not exist. Canceling append operation ..." << std::endl;
+        std::cout << "ERROR" << std::endl;
         return 0;
     }
-    // Checkar att filepath2 faktiskt inte finns
-    if (!checkFileName(getWorkingDirectory(), filepath2))
+    if (subdircwd2 == -1)
     {
-        std::cout << "ERROR : You cannot append from a file to a file that does not exist. Canceling append operation ..." << std::endl;
+        std::cout << "ERROR" << std::endl;
         return 0;
     }
+
+    // check if dirpath actually exist
 
     // Get file 1 dir contents
-    dir_entry file1 = getFileDirEntry(filepath1);
+    dir_entry file1 = getFileDirEntry(pathname1.back(), subdircwd1);
     // Then file 1 contents
     std::string file1Data = getFileData(file1);
     // Get file 2 dir contents
-    dir_entry file2 = getFileDirEntry(filepath2);
+    dir_entry file2 = getFileDirEntry(pathname2.back(), subdircwd2);
     // Then file 2 contents
     std::string file2Data = getFileData(file2);
     // Complete data string
@@ -383,8 +406,8 @@ int FS::append(std::string filepath1, std::string filepath2)
 
     // Now we shall store the new data to file2 and change fat and diskDirEntry.
     // Smart lösning är att ta bort file2 temporärt för att sedan skappa den på nytt med nya contentes
-    rm(file2.file_name);
-    create(file2.file_name, completFileData, getWorkingDirectory());
+    rm(filepath2);
+    create(file2.file_name, completFileData, subdircwd2);
 
     return 0;
 }
@@ -395,37 +418,64 @@ int FS::mkdir(std::string dirpath)
 {
     std::cout << "FS::mkdir(" << dirpath << ")\n";
 
-    if (dirpath.size() >= 56)
+    std::vector<std::string> pathname = getAbsoluteFilepath(dirpath);
+
+    // HMmmmmm....
+    if (pathname.empty() || dirpath == "./")
     {
-        std::cout << "ERROR : Filename to large. Canceling directory creation ..." << std::endl;
+        std::cout << "ERROR : Not a valid name" << std::endl;
         return 0;
     }
-    if (checkFileName(getWorkingDirectory(), dirpath))
+    std::string dirname = pathname.back();
+
+    int subDirCwd = testAbsoluteFilepath(pathname, TYPE_DIR);
+    int subDir3 = testAbsoluteFilepath(pathname, TYPE_FILE);
+    pathname.pop_back();
+    int subdir2 = testAbsoluteFilepath(pathname, TYPE_DIR);
+
+    if (subDirCwd != -1 || subdir2 == -1)
     {
-        std::cout << "ERROR : A file/dir with that name does already exist. Canceling directory creation ..." << std::endl;
+        std::cout << "ERROR" << std::endl;
+        return 0;
+    }
+    if (subDir3 != -1)
+    {
+        std::cout << "ERROR" << std::endl;
         return 0;
     }
 
-    if (!checkCwdSpace())
+    // Nu kan vi skappa diren
+
+    // Validate filename
+    // regex: [a-z] [A-Z] [0-9] . _ -
+    std::regex regex_dirname("^[\\w\\-. ]+$");
+    if (!std::regex_match(dirname, regex_dirname))
     {
-        std::cout << "ERROR : No place in current directory. Canceling directory creation ..." << std::endl;
+        std::cout << "ERROR : Directory name must only contain [a-z] [A-Z] [0-9] . _ -" << std::endl;
+        return 0;
+    }
+    // max filename size: 55 characters
+    if (dirname.size() >= 56)
+    {
+        std::cout << "ERROR : Directory name must not exceed 55 characters" << std::endl;
         return 0;
     }
 
     // Skapar en Directory entry för filen.
-    dir_entry newDirEntry = initDirEntry(dirpath, 0, TYPE_DIR);
+    dir_entry newDirEntry = initDirEntry(dirname, 0, TYPE_DIR);
     // Skapar faktiskta innehåller newDirEntry har
     dir_entry newSubDirectory[BLOCK_SIZE / 64];
     // Sätter subdirens första dir entry som en parent
     dir_entry parentEntry = initDirEntry("..", 0, TYPE_DIR);
     // detta gäller för parrententry enbart
-    parentEntry.first_blk = getWorkingDirectory();
+    parentEntry.first_blk = subdir2;
     newSubDirectory[0] = parentEntry;
     disk.write(newDirEntry.first_blk, (uint8_t *)&newSubDirectory);
 
     // updateFat, uppdaterar enbart fat, om vart filen ska vara osv.
     updateFat(newDirEntry, CREATE);
-    updateDiskDirEntry(newDirEntry, CREATE, getWorkingDirectory());
+    // Uppdaterar diskDirEnry
+    updateDiskDirEntry(newDirEntry, CREATE, subdir2);
 
     return 0;
 }
@@ -437,38 +487,16 @@ int FS::cd(std::string dirpath)
 
     // Get dirPath contents
     std::vector<std::string> pathname = getAbsoluteFilepath(dirpath);
-
     // check if dirpath actually exist
-    int subDirCwd = testAbsoluteFilepath(pathname);
+    int subDirCwd = testAbsoluteFilepath(pathname, TYPE_DIR);
+
     if (subDirCwd != -1)
     {
         setWorkingDirectory(subDirCwd);
     }
-
-    if (!checkFileName(getWorkingDirectory(), dirpath) && dirpath != "..")
-    {
-        std::cout << "ERROR : A directory with that name does not exist. Canceling directory navigation ..." << std::endl;
-        return 0;
-    }
-
-    dir_entry getDir = getFileDirEntry(dirpath);
-
-    // check om det faktskt är en directory
-    if (getDir.type == TYPE_FILE)
-    {
-        std::cout << "ERROR : You cannot change working directory to a file. Canceling directory navigation ..." << std::endl;
-        return 0;
-    }
-    if (dirpath == "..")
-    {
-        dir_entry currentCWD[BLOCK_SIZE / sizeof(dir_entry)];
-        getCurrentWorkDirectoryEntries(currentCWD, getWorkingDirectory());
-        setWorkingDirectory(currentCWD[0].first_blk);
-    }
     else
     {
-        std::cout << getDir.first_blk;
-        setWorkingDirectory(getDir.first_blk);
+        std::cout << "ERROR" << std::endl;
     }
 
     return 0;
@@ -483,11 +511,6 @@ int FS::pwd()
     std::string output = getPwd();
 
     std::cout << output << std::endl;
-
-    /*for (int i = 0; i < 20; i++)
-    {
-        std::cout << "index " << i << " : " << fat[i] << std::endl;
-    }*/
 
     return 0;
 }
@@ -640,11 +663,11 @@ int FS::getAmountOfBlocks(int size)
     return amountOfBlocks;
 }
 
-dir_entry FS::getFileDirEntry(std::string fileName)
+dir_entry FS::getFileDirEntry(std::string fileName, int cwd)
 {
     dir_entry file;
     dir_entry currentCwd[BLOCK_SIZE / 64];
-    getCurrentWorkDirectoryEntries(currentCwd, getWorkingDirectory());
+    getCurrentWorkDirectoryEntries(currentCwd, cwd);
 
     for (int i = 0; i < BLOCK_SIZE / 64; i++)
     {
@@ -706,25 +729,49 @@ std::vector<std::string> FS::getAbsoluteFilepath(std::string filepath)
     return filepath_content;
 }
 
-int FS::testAbsoluteFilepath(std::vector<std::string> filepathcontents)
+int FS::testAbsoluteFilepath(std::vector<std::string> filepathcontents, bool type)
 {
     // Bara cd tänkt
     // Loopa igenom vectorn för att testa alla subdirs.(om de finns)
+    // nedan är fel
     int currentCwd = ROOT_BLOCK;
+    int counter = filepathcontents.size();
+    if (type == TYPE_FILE)
+        counter--;
+    bool nameExist;
 
-    for (int i = 0; i < filepathcontents.size(); i++)
+    for (int i = 0; i < counter; i++)
     {
         dir_entry cwd[BLOCK_SIZE / sizeof(dir_entry)];
         getCurrentWorkDirectoryEntries(cwd, currentCwd);
-        if (!checkFileName(currentCwd, filepathcontents[i]))
+
+        nameExist = false;
+        for (int j = 0; j < BLOCK_SIZE / 64; j++)
         {
+            if (cwd[j].file_name == filepathcontents[i] && cwd[j].type == TYPE_DIR)
+            {
+                currentCwd = cwd[j].first_blk;
+                nameExist = true;
+                break;
+            }
+        }
+        if (!nameExist)
             return -1;
-        }
-        dir_entry currentDir = getFileDirEntry(filepathcontents[i]);
-        if (currentDir.type == TYPE_DIR)
+    }
+
+    if (type == TYPE_FILE)
+    {
+        dir_entry testFile = getFileDirEntry(filepathcontents.back(), currentCwd);
+        if (testFile.first_blk != 65535 && testFile.type == TYPE_FILE)
         {
-            currentCwd = currentDir.first_blk;
+            nameExist = true;
         }
+        else
+        {
+            nameExist = false;
+        }
+        if (!nameExist)
+            return -1;
     }
     return currentCwd;
 }
