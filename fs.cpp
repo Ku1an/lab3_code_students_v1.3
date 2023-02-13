@@ -341,7 +341,6 @@ int FS::cp(std::string sourcepath, std::string destpath)
 
             dir_entry subDir = getFileDirEntry(pathname2.back(), currentCwd->first_blk);
             std::string accessRights = getAccessRights(subDir);
-            std::cout << accessRights;
             if (accessRights.find('w') == std::string::npos)
             {
                 std::cout << "ERROR : No permission to cp in this directory ." << std::endl;
@@ -466,7 +465,6 @@ int FS::mv(std::string sourcepath, std::string destpath)
 
             dir_entry subDir = getFileDirEntry(pathname2.back(), currentCwd->first_blk);
             std::string accessRights = getAccessRights(subDir);
-            std::cout << accessRights;
             if (accessRights.find('w') == std::string::npos)
             {
                 std::cout << "ERROR : No permission to cp in this directory ." << std::endl;
@@ -606,7 +604,7 @@ int FS::append(std::string filepath1, std::string filepath2)
     std::string accessRight1 = getAccessRights(file1);
     std::string accessRight2 = getAccessRights(file2);
 
-    if (accessRight1.find('r') == std::string::npos || accessRight2.find('w') == std::string::npos)
+    if (accessRight1.find('r') == std::string::npos || accessRight2.find('w') == std::string::npos || accessRight2.find('r') == std::string::npos)
     {
         std::cout << "ERROR : No permission to do that." << std::endl;
         return 0;
@@ -1030,7 +1028,6 @@ int FS::testAbsoluteFilepath(std::vector<std::string> filepathcontents, bool typ
 {
     // Bara cd tänkt
     // Loopa igenom vectorn för att testa alla subdirs.(om de finns)
-    // nedan är fel
     int currentCwd = ROOT_BLOCK;
     int counter = filepathcontents.size();
     if (type == TYPE_FILE)
