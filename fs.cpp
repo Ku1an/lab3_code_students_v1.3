@@ -1207,7 +1207,9 @@ void FS::updateDiskDirEntry(dir_entry newFile, int deleteOrCreate, int cwd)
                 // Då hittade vi filen som ska bortas
                 if (deleteOrCreate == DELETE)
                 {
+                    std::string empty = "";
                     currentCwd[i].first_blk = 65535;
+                    currentCwd[i].file_name[0] = ' ';
                 }
                 else
                 {
